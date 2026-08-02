@@ -18,9 +18,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cinevault_local_dev_only}
       POSTGRES_DB: cinevault
     ports:
+      # 5433 on the host, not 5432: a local Supabase stack already holds the standard port on
+      # this machine, and two Postgres containers fighting over it fails at `docker compose
+      # up` with a permissions error that reads like a Windows problem rather than a conflict.
+      #
       # Bound to localhost only. Without the 127.0.0.1 prefix Docker publishes on every
       # interface and punches through the Windows firewall, exposing the database to the LAN.
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       # Named volume, so `docker compose down` does not wipe the database. Losing this in
       # production means every member has to re-link their Plex account.

@@ -122,6 +122,21 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   };
 }
 
+/**
+ * The signed-in user's FULL row, or null.
+ *
+ * `getSessionUser()` returns only identity, which is what almost every page needs and keeps
+ * the common query small. Anything that has to reason about subscription or Plex state wants
+ * this instead.
+ */
+export async function getCurrentUser(): Promise<User | null> {
+  const session = await getSessionUser();
+  if (!session) return null;
+
+  const [user] = await db.select().from(users).where(eq(users.id, session.id)).limit(1);
+  return user ?? null;
+}
+
 /** Sign out of this device. */
 export async function destroySession(): Promise<void> {
   const jar = await cookies();

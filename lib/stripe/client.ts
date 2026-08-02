@@ -17,7 +17,7 @@ export const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
   // Pinned deliberately. Stripe rolls the API forward and an unpinned client can start
   // receiving a differently-shaped object after a library upgrade, in the webhook, in
   // production, on a Sunday.
-  apiVersion: "2025-11-17.clover",
+  apiVersion: "2026-07-29.dahlia",
   appInfo: { name: "CineVault", version: "0.1.0" },
   // Network blips shouldn't fail a checkout. Stripe's client retries idempotently.
   maxNetworkRetries: 2,
