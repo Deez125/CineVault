@@ -1,17 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Check,
-  CircleCheck,
-  Copy,
-  ExternalLink,
-  Link2,
-  LoaderCircle,
-  TriangleAlert,
-  Unlink,
-} from "lucide-react";
+import { CircleCheck, ExternalLink, Link2, LoaderCircle, TriangleAlert, Unlink } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -32,8 +23,8 @@ type PlexState = {
 };
 
 export function PlexClient({ state }: { state: PlexState }) {
-  const [linking, setLinking] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
+  const [going, setGoing] = useState(false);
 
   const linked = Boolean(state.plexUsername);
   const shared = state.shareState === "invited";
@@ -84,22 +75,30 @@ export function PlexClient({ state }: { state: PlexState }) {
             )}
 
             <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-              Linked the wrong account? Unlink it and connect a different one. Your
+              Linked the wrong account? Unlink it and sign in with a different one. Your
               subscription isn&apos;t affected.
             </p>
           </>
         ) : (
           <>
             <p className="mt-3 text-sm">
-              Connect your Plex account and we&apos;ll invite you to the CineVault server.
+              Sign in with Plex and we&apos;ll invite you to the CineVault server.
             </p>
             <p className="mt-1.5 text-xs text-muted-foreground">
-              You&apos;ll enter a short code at plex.tv. We never see your password.
+              You sign in on Plex&apos;s own site. We never see your password.
             </p>
 
-            <Button size="lg" className="mt-5 w-full sm:w-auto" onClick={() => setLinking(true)}>
-              <Link2 />
-              Link my Plex
+            {/* A plain link, not a fetch. The whole point is to navigate to Plex and be
+                forwarded back, so this must be a real navigation the browser owns. */}
+            <Button
+              size="lg"
+              className="mt-5 w-full sm:w-auto"
+              disabled={going}
+              onClick={() => setGoing(true)}
+              render={<a href="/api/plex/start" />}
+            >
+              {going ? <LoaderCircle className="animate-spin" /> : <Link2 />}
+              Sign in with Plex
             </Button>
 
             <p className="mt-3 text-xs text-muted-foreground">
@@ -118,7 +117,6 @@ export function PlexClient({ state }: { state: PlexState }) {
         )}
       </section>
 
-      <LinkDialog key={`link-${linking}`} open={linking} onOpenChange={setLinking} />
       <UnlinkDialog
         key={`unlink-${unlinking}`}
         open={unlinking}
@@ -126,183 +124,6 @@ export function PlexClient({ state }: { state: PlexState }) {
         plexUsername={state.plexUsername}
       />
     </div>
-  );
-}
-
-/**
- * The device-PIN flow.
- *
- * Show a 4-character code, then poll until Plex says the member has entered it at
- * plex.tv/link. There is no way to push them a link and no way to know they are done other
- * than asking, so polling is the flow, not a workaround.
- */
-function LinkDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const router = useRouter();
-  const [code, setCode] = useState<string | null>(null);
-  const [pinId, setPinId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ plexUsername: string; warning?: string } | null>(null);
-  const [copied, setCopied] = useState(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    fetch("/api/plex/link", { method: "POST" })
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (body.error) throw new Error(body.error);
-        setCode(body.code);
-        setPinId(body.pinId);
-      })
-      .catch((err) => !cancelled && setError(err.message));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!pinId || done || error) return;
-
-    let stopped = false;
-
-    const timer = setInterval(async () => {
-      try {
-        const res = await fetch("/api/plex/poll", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ pinId }),
-        });
-        const body = await res.json();
-        if (stopped) return;
-
-        if (body.error) {
-          setError(body.error);
-          clearInterval(timer);
-          return;
-        }
-
-        if (body.linked) {
-          setDone({ plexUsername: body.plexUsername, warning: body.warning });
-          clearInterval(timer);
-          // Let them see it worked before the dialog closes under them.
-          setTimeout(() => {
-            onOpenChange(false);
-            router.refresh();
-            toast.success(`Linked as ${body.plexUsername}`);
-          }, 1600);
-        }
-      } catch {
-        // A blip shouldn't end the flow.
-      }
-    }, 2500);
-
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [pinId, done, error, onOpenChange, router]);
-
-  useEffect(() => () => void (copyTimer.current && clearTimeout(copyTimer.current)), []);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Link your Plex account</DialogTitle>
-          <DialogDescription>We never see your Plex password.</DialogDescription>
-        </DialogHeader>
-
-        {error ? (
-          <Alert variant="destructive">
-            <TriangleAlert />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : done ? (
-          <div className="py-6 text-center">
-            <CircleCheck className="mx-auto size-10 text-success" />
-            <p className="mt-4 font-medium">Linked as {done.plexUsername}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {done.warning ?? "Your invite is on its way. Accept it at app.plex.tv."}
-            </p>
-          </div>
-        ) : !code ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" />
-            Getting your code
-          </div>
-        ) : (
-          <>
-            <ol className="space-y-4 text-sm">
-              <li className="flex gap-3">
-                <Step n={1} />
-                <a
-                  href="https://plex.tv/link"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline"
-                >
-                  Open plex.tv/link
-                  <ExternalLink className="size-3.5" />
-                </a>
-              </li>
-
-              <li className="flex gap-3">
-                <Step n={2} />
-                <div className="flex-1">
-                  <p>Enter this code:</p>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard?.writeText(code);
-                      setCopied(true);
-                      copyTimer.current = setTimeout(() => setCopied(false), 1500);
-                    }}
-                    className="mt-2 flex w-full items-center justify-center gap-3 rounded-lg border bg-muted/40 py-4 transition-colors hover:border-primary/40"
-                    title="Copy"
-                  >
-                    <span className="font-mono text-3xl font-bold tracking-[0.3em] text-primary">
-                      {code}
-                    </span>
-                    {copied ? (
-                      <Check className="size-4 text-success" />
-                    ) : (
-                      <Copy className="size-4 text-muted-foreground" />
-                    )}
-                  </button>
-                </div>
-              </li>
-
-              <li className="flex gap-3">
-                <Step n={3} />
-                <p>Sign in with the Plex account you want to watch on.</p>
-              </li>
-            </ol>
-
-            <div className="mt-2 flex items-center justify-center gap-2 border-t pt-4 text-sm text-muted-foreground">
-              <LoaderCircle className="size-3.5 animate-spin" />
-              Waiting for you
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Step({ n }: { n: number }) {
-  return (
-    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs">
-      {n}
-    </span>
   );
 }
 
@@ -353,13 +174,11 @@ function UnlinkDialog({
           </Alert>
         )}
 
-        <div className="rounded-lg border bg-muted/40 p-4 text-sm font-medium">
-          {plexUsername}
-        </div>
+        <div className="rounded-lg border bg-muted/40 p-4 text-sm font-medium">{plexUsername}</div>
 
         <p className="text-sm text-muted-foreground">
-          Your subscription isn&apos;t affected. Link a different Plex account whenever you
-          like and you&apos;ll be invited straight back in.
+          Your subscription isn&apos;t affected. Sign in with a different Plex account whenever
+          you like and you&apos;ll be invited straight back in.
         </p>
 
         <DialogFooter>

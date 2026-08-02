@@ -152,7 +152,7 @@ export default async function HomePage() {
                           href={
                             current > 0
                               ? "/dashboard/billing"
-                              : `/checkout?price=${encodeURIComponent(tier.priceId)}`
+                              : `/dashboard/billing?price=${encodeURIComponent(tier.priceId)}`
                           }
                         />
                       }

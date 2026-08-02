@@ -117,20 +117,47 @@ async function plexXml<T>(path: string, init: RequestInit = {}): Promise<T> {
 export type PlexPin = { id: number; code: string };
 
 /**
- * Start a link. Returns a 4-character code the user types at plex.tv/link.
+ * Mint a PIN to hand to Plex's hosted sign-in page.
  *
- * Do NOT add `?strong=true`. It returns a 25-character code, and plex.tv/link only accepts
- * the short form — producing a code that looks perfectly fine and simply cannot be used.
+ * `strong: true` here, deliberately. The old warning against it applies to the OTHER flow:
+ * if you are asking somebody to TYPE the code at plex.tv/link, it has to be the short
+ * 4-character form, because the manual entry page will not accept a 25-character one. We are
+ * not asking anyone to type anything — the code travels in a URL — so the long, higher
+ * entropy form is strictly better.
  */
 export async function createPin(): Promise<PlexPin> {
   const pin = await plexJson<{ id: number; code: string }>("/api/v2/pins", {
     method: "POST",
     token: null,
-    body: new URLSearchParams({ strong: "false" }),
+    body: new URLSearchParams({ strong: "true" }),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
   });
 
   return { id: pin.id, code: pin.code };
+}
+
+/**
+ * Where to send someone to sign in to Plex.
+ *
+ * Plex's hosted auth page. They sign in with their own credentials (or an existing session,
+ * in which case it is one click), Plex attaches the result to the PIN, and it forwards them
+ * back to us. We then redeem the PIN for a token.
+ *
+ * Note the `#?` — the parameters go in the FRAGMENT, not the query string. Plex's page reads
+ * them client-side, and a normal `?` query silently produces a sign-in page that forgets
+ * where it was supposed to send you afterwards.
+ */
+export function authUrl(code: string, forwardUrl: string): string {
+  const params = new URLSearchParams({
+    clientID: env.PLEX_CLIENT_IDENTIFIER ?? "",
+    code,
+    forwardUrl,
+    "context[device][product]": "CineVault",
+    "context[device][deviceName]": "CineVault",
+    "context[device][platform]": "Web",
+  });
+
+  return `https://app.plex.tv/auth#?${params.toString()}`;
 }
 
 export type PlexIdentity = { id: string; username: string; email: string | null };

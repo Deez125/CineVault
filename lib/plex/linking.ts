@@ -4,7 +4,7 @@ import { users, type User } from "@/lib/db/schema";
 import { applyEntitlement } from "@/lib/entitlements";
 import { logEvent } from "@/lib/events";
 import { plexConfigured } from "@/lib/env";
-import { checkPin, createPin, type PlexIdentity } from "./client";
+import { authUrl, checkPin, createPin, type PlexIdentity } from "./client";
 import { isProtected } from "./protected";
 import { revokePlexAccess } from "./share";
 
@@ -24,15 +24,22 @@ export class PlexLinkError extends Error {
   }
 }
 
-export type LinkStart = { code: string; pinId: number };
+export type LinkStart = { pinId: number; authUrl: string };
 
-export async function startLink(): Promise<LinkStart> {
+/**
+ * Begin a link.
+ *
+ * Returns the URL to send the member to. They sign in to Plex on Plex's own page and get
+ * forwarded back, which is one click if they are already signed in there. We never see their
+ * password, and there is no code to type.
+ */
+export async function startLink(returnUrl: string): Promise<LinkStart> {
   if (!plexConfigured()) {
     throw new PlexLinkError("Plex linking isn't available right now.");
   }
 
   const pin = await createPin();
-  return { code: pin.code, pinId: pin.id };
+  return { pinId: pin.id, authUrl: authUrl(pin.code, returnUrl) };
 }
 
 export type LinkPoll =

@@ -98,13 +98,7 @@ export function BillingClient({
               <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Current plan
               </span>
-              {sub.cancelAtPeriodEnd ? (
-                <Pill tone="warning">Cancelling</Pill>
-              ) : sub.status === "past_due" ? (
-                <Pill tone="destructive">Payment failed</Pill>
-              ) : (
-                <Pill tone="success">Active</Pill>
-              )}
+              <StatusPill status={sub.status} cancelling={sub.cancelAtPeriodEnd} />
             </div>
 
             <div className="mt-2 flex items-baseline gap-2">
@@ -276,6 +270,39 @@ export function BillingClient({
       />
     </div>
   );
+}
+
+/**
+ * The subscription's real state.
+ *
+ * Every status is named explicitly and the fallback is the raw string, never "Active". The
+ * previous version treated anything that wasn't past_due or cancelling as Active, so an
+ * `incomplete` subscription from an abandoned checkout was presented as a live plan, complete
+ * with a renewal date. Guessing in the optimistic direction about whether somebody has paid
+ * is the wrong way round.
+ */
+function StatusPill({ status, cancelling }: { status: string; cancelling: boolean }) {
+  if (cancelling) return <Pill tone="warning">Cancelling</Pill>;
+
+  switch (status) {
+    case "active":
+      return <Pill tone="success">Active</Pill>;
+    case "trialing":
+      return <Pill tone="success">Trial</Pill>;
+    case "past_due":
+      return <Pill tone="destructive">Payment failed</Pill>;
+    case "unpaid":
+      return <Pill tone="destructive">Unpaid</Pill>;
+    case "incomplete":
+    case "incomplete_expired":
+      return <Pill tone="warning">Payment not finished</Pill>;
+    case "canceled":
+      return <Pill tone="destructive">Cancelled</Pill>;
+    case "paused":
+      return <Pill tone="warning">Paused</Pill>;
+    default:
+      return <Pill tone="warning">{status}</Pill>;
+  }
 }
 
 function Pill({

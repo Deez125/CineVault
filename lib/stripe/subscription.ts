@@ -42,7 +42,20 @@ export type SubscriptionDetail = {
   invoices: InvoiceSummary[];
 };
 
-/** The subscription that decides this member's access, with everything the UI needs. */
+/**
+ * The subscription that decides this member's access, with everything the UI needs.
+ *
+ * Returns null unless it actually ENTITLES something. That guard is load-bearing: an
+ * abandoned checkout leaves an `incomplete` subscription on the customer, and pickEntitling
+ * falls back to the most recent record when nothing is live — correct for the entitlement
+ * engine, which then computes access as none, but wrong here, where the caller renders
+ * whatever it gets as "your current plan".
+ *
+ * Without this, clicking a plan, landing on Stripe, and pressing back showed a fully
+ * furnished Active plan with a renewal date for something nobody had paid for. Cancelling it
+ * then failed, because the service layer correctly refused to cancel a subscription that
+ * entitles nothing, and the two disagreed about reality.
+ */
 export async function getSubscriptionDetail(user: User): Promise<SubscriptionDetail | null> {
   if (!user.stripeCustomerId) return null;
 
@@ -54,7 +67,7 @@ export async function getSubscriptionDetail(user: User): Promise<SubscriptionDet
   });
 
   const subscription = pickEntitling(list.data);
-  if (!subscription) return null;
+  if (!subscription || !isEntitling(subscription.status)) return null;
 
   const item = subscription.items.data[0];
   const price = item?.price;

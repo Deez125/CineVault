@@ -93,12 +93,29 @@ export async function startCheckout(user: User, priceId: string): Promise<Checko
     );
   }
 
-  // Reuse an unpaid attempt rather than piling up abandoned subscriptions. Someone who opens
-  // checkout, wanders off, and comes back tomorrow should not leave a trail of `incomplete`
-  // subscriptions behind them.
+  // Reuse an unpaid attempt at the SAME price rather than piling up abandoned subscriptions.
+  // Someone who opens checkout, wanders off, and comes back tomorrow should not leave a trail
+  // of `incomplete` subscriptions behind them.
   const reusable = existing.data.find(
     (s) => s.status === "incomplete" && s.items.data[0]?.price?.id === priceId
   );
+
+  // Anything else left incomplete is an abandoned attempt at a DIFFERENT plan. Cancel it.
+  //
+  // Stripe expires these on its own after about a day, but a day is long enough for the
+  // customer to come back, and leaving them around means the billing page has to keep
+  // deciding which of several dead subscriptions to ignore. Better that there is only ever
+  // one.
+  for (const stale of existing.data) {
+    if (stale.status !== "incomplete") continue;
+    if (stale.id === reusable?.id) continue;
+
+    try {
+      await stripe.subscriptions.cancel(stale.id);
+    } catch {
+      // Already gone, or Stripe expired it first. Either way it is no longer in the way.
+    }
+  }
 
   const subscription =
     reusable ??
