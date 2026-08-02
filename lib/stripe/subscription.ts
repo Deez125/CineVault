@@ -206,6 +206,46 @@ export async function cancelImmediately(user: User): Promise<Stripe.Subscription
   return stripe.subscriptions.cancel(user.stripeSubscriptionId);
 }
 
+/**
+ * Terminate EVERY subscription on the customer, immediately.
+ *
+ * Deliberately not driven by `user.stripeSubscriptionId`. That column is a cache, and the
+ * situations where you reach for this are exactly the ones where the cache is wrong — a
+ * duplicate subscription, an abandoned attempt, a webhook that never arrived. Ask Stripe what
+ * exists and end all of it.
+ *
+ * Returns what it cancelled, so the caller can report rather than assert.
+ */
+export async function terminateAllSubscriptions(
+  user: User
+): Promise<{ id: string; wasStatus: string }[]> {
+  if (!user.stripeCustomerId) return [];
+
+  const list = await stripe.subscriptions.list({
+    customer: user.stripeCustomerId,
+    status: "all",
+    limit: 100,
+  });
+
+  const terminated: { id: string; wasStatus: string }[] = [];
+
+  for (const subscription of list.data) {
+    // Already over. Cancelling one of these throws rather than being a no-op.
+    if (["canceled", "incomplete_expired"].includes(subscription.status)) continue;
+
+    try {
+      await stripe.subscriptions.cancel(subscription.id);
+      terminated.push({ id: subscription.id, wasStatus: subscription.status });
+    } catch (err) {
+      // Keep going. One stubborn subscription must not leave the others live, which would be
+      // the worst outcome: a "terminate" that half worked.
+      console.error(`[debug] could not cancel ${subscription.id}:`, err);
+    }
+  }
+
+  return terminated;
+}
+
 /** Step one of a card change: a SetupIntent for the browser to confirm. */
 export async function startCardUpdate(user: User): Promise<string> {
   if (!user.stripeCustomerId) throw new Error("no Stripe customer");

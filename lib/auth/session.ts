@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { and, eq, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { sessions, users, type User } from "@/lib/db/schema";
-import { isProduction } from "@/lib/env";
+import { adminEmails, isProduction } from "@/lib/env";
 
 /**
  * Sessions.
@@ -112,11 +112,26 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     });
   }
 
+  // Admin comes from the ADMIN_EMAILS allowlist, evaluated NOW, not from the stored column.
+  //
+  // The column is only written at signup, so an account created before its address was added
+  // to the list would never become an admin no matter what the environment said — and, worse,
+  // an account removed from the list would stay an admin forever. Deriving it here means both
+  // directions take effect on the very next request.
+  //
+  // The column is kept in step opportunistically so admin listings and queries can still use
+  // it, but nothing trusts it for authorisation.
+  const isAdmin = adminEmails().includes(row.email);
+
+  if (isAdmin !== row.isAdmin) {
+    await db.update(users).set({ isAdmin, updatedAt: new Date() }).where(eq(users.id, row.id));
+  }
+
   return {
     id: row.id,
     email: row.email,
     name: row.name,
-    isAdmin: row.isAdmin,
+    isAdmin,
     banned: row.banned,
     emailVerifiedAt: row.emailVerifiedAt,
   };
