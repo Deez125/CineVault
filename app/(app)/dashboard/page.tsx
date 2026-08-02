@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { announcements } from "@/lib/db/schema";
 import { getCurrentUser } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth";
+import { emailVerificationRequired } from "@/lib/email";
 
 export const metadata: Metadata = { title: "Overview" };
 
@@ -60,7 +61,7 @@ export default async function DashboardPage() {
           </span>
         </div>
 
-        {!user.emailVerifiedAt && (
+        {emailVerificationRequired() && !user.emailVerifiedAt && (
           <p className="text-center text-xs text-muted-foreground">
             Your email isn&apos;t confirmed yet.{" "}
             <Link href="/dashboard/settings" className="underline underline-offset-2">

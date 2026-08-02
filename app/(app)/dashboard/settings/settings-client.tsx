@@ -29,11 +29,13 @@ export function SettingsClient({
   email,
   name,
   emailVerified,
+  showVerification,
   isMember,
 }: {
   email: string;
   name: string | null;
   emailVerified: boolean;
+  showVerification: boolean;
   isMember: boolean;
 }) {
   const [deleting, setDeleting] = useState(false);
@@ -52,19 +54,20 @@ export function SettingsClient({
           <Label>Email</Label>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm">{email}</span>
-            {emailVerified ? (
-              <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success ring-1 ring-inset ring-success/25">
-                <CircleCheck className="size-3" />
-                Confirmed
-              </span>
-            ) : (
-              <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning ring-1 ring-inset ring-warning/25">
-                Not confirmed
-              </span>
-            )}
+            {showVerification &&
+              (emailVerified ? (
+                <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success ring-1 ring-inset ring-success/25">
+                  <CircleCheck className="size-3" />
+                  Confirmed
+                </span>
+              ) : (
+                <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning ring-1 ring-inset ring-warning/25">
+                  Not confirmed
+                </span>
+              ))}
           </div>
 
-          {!emailVerified && <ResendVerification />}
+          {showVerification && !emailVerified && <ResendVerification />}
         </div>
       </Section>
 

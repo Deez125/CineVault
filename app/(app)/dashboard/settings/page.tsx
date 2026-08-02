@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { SettingsClient } from "./settings-client";
 import { requireUser } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
+import { emailVerificationRequired } from "@/lib/email";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -19,6 +20,10 @@ export default async function SettingsPage() {
       <SettingsClient
         email={user.email}
         name={user.name}
+        // Decided on the server: with no mail provider there is nothing to confirm, so the
+        // whole confirmation UI is hidden rather than showing a permanent "Not confirmed"
+        // badge next to a button that cannot help.
+        showVerification={emailVerificationRequired()}
         emailVerified={Boolean(user.emailVerifiedAt)}
         isMember={user.isMember}
       />

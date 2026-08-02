@@ -59,6 +59,30 @@ export function emailConfigured(): boolean {
 }
 
 /**
+ * Should we ask people to confirm their email address?
+ *
+ * Requires BOTH the flag and a real provider. Turning the flag on without one would park
+ * every new signup on a "check your email" page waiting for a message that can never arrive
+ * — a dead end, and worse than not verifying at all.
+ *
+ * Nothing gates access on verification today; it is a nudge, not a lock. When that changes,
+ * this is the one function to consult.
+ */
+export function emailVerificationRequired(): boolean {
+  if (!env.REQUIRE_EMAIL_VERIFICATION) return false;
+
+  if (!emailConfigured()) {
+    console.warn(
+      "[email] REQUIRE_EMAIL_VERIFICATION is on but no provider is configured. " +
+        "Treating verification as disabled so signups are not stranded."
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Refuse to run in production without a mail provider.
  *
  * Called at worker startup. In development the console transport is genuinely useful — the

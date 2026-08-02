@@ -59,6 +59,21 @@ const schema = z.object({
    */
   ADMIN_EMAILS: z.string().default(""),
 
+  /**
+   * Whether to ask people to confirm their email address.
+   *
+   * OFF until a mail provider exists, because with no provider the "check your email" screen
+   * is a dead end: there is no message, so there is no way to carry on. Turn it back on in
+   * the same change that wires up sending.
+   *
+   * Read through `emailVerificationRequired()`, which also refuses to let it be on while
+   * there is nothing to send with.
+   */
+  REQUIRE_EMAIL_VERIFICATION: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
   // ── Background loop tuning ────────────────────────────────────────────────
   RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60_000),
   ENFORCE_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),

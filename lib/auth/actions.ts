@@ -9,7 +9,12 @@ import { db } from "@/lib/db";
 import { emailTokens, users } from "@/lib/db/schema";
 import { adminEmails } from "@/lib/env";
 import { logEvent } from "@/lib/events";
-import { passwordResetEmail, sendEmail, verificationEmail } from "@/lib/email";
+import {
+  emailVerificationRequired,
+  passwordResetEmail,
+  sendEmail,
+  verificationEmail,
+} from "@/lib/email";
 import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
 import {
   MIN_PASSWORD_LENGTH,
@@ -94,34 +99,7 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
       .returning({ id: users.id });
     userId = created.id;
   } catch (err) {
-    // Unique violation on email. Deliberately NOT reported as "that email is taken" — that
-    // would turn this form into an oracle for which addresses have accounts. The person who
-    // genuinely owns the address gets an email telling them one already exists.
-    if (isUniqueViolation(err)) {
-      const [existing] = await db
-        .select({ id: users.id })
-        .from(users)
-        .where(eq(users.email, email))
-        .limit(1);
-
-      if (existing) {
-        await sendEmail({
-          to: email,
-          subject: "You already have a CineVault account",
-          text: [
-            "Someone tried to sign up with this email address, but an account already exists.",
-            "",
-            "If that was you, sign in instead. If you've forgotten your password, use the",
-            "'Forgot password' link on the sign-in page.",
-            "",
-            "If it wasn't you, nothing has changed and you can ignore this.",
-          ].join("\n"),
-        });
-      }
-
-      // The same outcome the real path produces, so the two are indistinguishable.
-      redirect(`/check-email?email=${encodeURIComponent(email)}`);
-    }
+    if (isUniqueViolation(err)) return duplicateSignup(email);
     throw err;
   }
 
@@ -133,10 +111,61 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
     message: `${email} created an account`,
   });
 
-  await issueVerificationEmail(userId, email);
+  if (emailVerificationRequired()) {
+    await issueVerificationEmail(userId, email);
+  }
+
   await createSession(userId, { ip, userAgent: await clientUserAgent() });
 
   redirect(next ?? "/dashboard");
+}
+
+/**
+ * Somebody tried to sign up with an address that already has an account.
+ *
+ * What we say depends on whether verification is on, and the difference is not cosmetic.
+ *
+ * WITH verification, both outcomes look identical — "check your email" — and the owner of the
+ * address gets a message explaining. The form tells a stranger nothing.
+ *
+ * WITHOUT it, that disguise cannot work. A successful signup signs you straight in, so
+ * ANYTHING else is already a signal that the address is taken; a fake "check your email"
+ * would leak exactly as much while also stranding the real owner on a page waiting for a
+ * message that will never arrive. So we say it plainly and point at the way forward.
+ *
+ * The honest summary: with no mail provider, this form can be used to test whether an address
+ * has an account here. That is the cost of removing verification, it is bounded by the signup
+ * rate limit, and it goes away when sending is wired up.
+ */
+async function duplicateSignup(email: string): Promise<FormState> {
+  if (!emailVerificationRequired()) {
+    return {
+      error: "An account already exists with that email. Sign in instead, or reset your password.",
+    };
+  }
+
+  const [existing] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+
+  if (existing) {
+    await sendEmail({
+      to: email,
+      subject: "You already have a CineVault account",
+      text: [
+        "Someone tried to sign up with this email address, but an account already exists.",
+        "",
+        "If that was you, sign in instead. If you've forgotten your password, use the",
+        "'Forgot password' link on the sign-in page.",
+        "",
+        "If it wasn't you, nothing has changed and you can ignore this.",
+      ].join("\n"),
+    });
+  }
+
+  redirect(`/check-email?email=${encodeURIComponent(email)}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -291,6 +320,7 @@ export async function verifyEmailToken(token: string): Promise<boolean> {
 export async function resendVerificationAction(): Promise<FormState> {
   const session = await getSessionUser();
   if (!session) return { error: "Sign in first." };
+  if (!emailVerificationRequired()) return { success: "Email confirmation isn't in use." };
   if (session.emailVerifiedAt) return { success: "Your email is already confirmed." };
 
   const limit = rateLimit(`verify:${session.id}`, 3, 60 * 60 * 1000);
