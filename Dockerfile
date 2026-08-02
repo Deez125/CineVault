@@ -20,7 +20,17 @@ WORKDIR /app
 # Only the manifests, so this layer is cached until a dependency actually changes. Copying
 # the whole source here would rebuild node_modules on every edit to a component.
 COPY package.json package-lock.json ./
-RUN npm ci
+
+# `--include=dev` is not optional, and it is not the default it looks like.
+#
+# npm omits devDependencies whenever NODE_ENV=production, and a host can set that without
+# asking: Coolify injects every environment variable as a build ARG into every stage, so
+# NODE_ENV=production in its dashboard silently becomes NODE_ENV=production here. TypeScript,
+# Tailwind and the rest are devDependencies, so `next build` then fails on a missing compiler
+# with an error that says nothing about why it went missing.
+#
+# Being explicit makes the build produce the same image whatever the host injects.
+RUN npm ci --include=dev
 
 # ══════════════════════════════════════════════════════════════════════════════
 # build — Next.js, plus plain-JS bundles of the worker and migrator
