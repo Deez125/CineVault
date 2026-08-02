@@ -29,6 +29,13 @@
       "when": 1785661897371,
       "tag": "0003_brave_oracle",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785662637414,
+      "tag": "0004_stiff_alice",
+      "breakpoints": true
     }
   ]
 }

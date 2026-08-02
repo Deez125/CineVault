@@ -41,9 +41,16 @@ export default async function TicketPage({ params }: { params: Promise<{ id: str
       />
 
       <TicketThread
-        ticketId={ticket.id}
-        initialStatus={ticket.status}
         viewerRole="user"
+        ticket={{
+          id: ticket.id,
+          subject: ticket.subject,
+          status: ticket.status,
+          priority: ticket.priority,
+          category: ticket.category,
+          createdAt: ticket.createdAt.toISOString(),
+          closedAt: ticket.closedAt?.toISOString() ?? null,
+        }}
         initialMessages={messages.map((m) => ({
           id: m.id,
           authorRole: m.authorRole,

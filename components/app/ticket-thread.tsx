@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, LoaderCircle, RotateCcw, Send } from "lucide-react";
+import { CircleCheck, LoaderCircle, MessageSquare, RotateCcw, Send, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { categoryLabel, priorityLabel, priorityTone } from "@/lib/ticket-types";
 import { cn } from "@/lib/utils";
 
 export type ThreadMessage = {
@@ -15,54 +16,57 @@ export type ThreadMessage = {
   createdAt: string;
 };
 
+export type ThreadTicket = {
+  id: string;
+  subject: string;
+  status: string;
+  priority: string;
+  category: string;
+  createdAt: string;
+  closedAt: string | null;
+};
+
 /**
- * A live support conversation.
+ * A live support conversation, with its details beside it.
  *
- * While the ticket is OPEN this polls for new messages every few seconds, so a reply lands
- * without anybody being told to refresh. When the ticket is closed the polling stops — there
- * is nothing more coming, and a closed ticket left polling forever is a request every three
- * seconds per open tab, for nothing.
+ * While the ticket is OPEN this polls for new messages, so a reply lands without anybody
+ * being told to refresh. When it closes, polling stops — there is nothing more coming, and a
+ * closed ticket left polling is a request every few seconds per open tab, forever.
  *
- * It also stops while the tab is hidden. A backgrounded tab cannot show anybody anything, and
- * browsers throttle its timers unpredictably anyway; on return it catches up in one request
- * because the cursor is a message id rather than a clock.
+ * It also stops while the tab is hidden, and catches up in one request on return, because the
+ * cursor is a message id rather than a clock.
  */
 export function TicketThread({
-  ticketId,
+  ticket: initialTicket,
   initialMessages,
-  initialStatus,
   viewerRole,
-  canClose = true,
 }: {
-  ticketId: string;
+  ticket: ThreadTicket;
   initialMessages: ThreadMessage[];
-  initialStatus: string;
-  /** Which side is reading. Only decides which bubbles sit on the right. */
+  /** Which side is reading. Decides which bubbles sit on the right. */
   viewerRole: "user" | "admin";
-  canClose?: boolean;
 }) {
   const router = useRouter();
   const [messages, setMessages] = useState(initialMessages);
-  const [status, setStatus] = useState(initialStatus);
+  const [status, setStatus] = useState(initialTicket.status);
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [busyStatus, setBusyStatus] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
-  // Read inside the poll without making it a dependency, which would tear down and rebuild
-  // the interval on every single message.
+  // Read inside the poll without being a dependency of it, which would tear down and rebuild
+  // the timer on every single message.
   const lastId = useRef(initialMessages.at(-1)?.id ?? 0);
 
   const merge = useCallback((incoming: ThreadMessage[]) => {
     if (incoming.length === 0) return;
 
     setMessages((current) => {
-      // The sender already added their own message optimistically, and the poll will hand it
-      // back a moment later. Deduping by id is what stops it appearing twice.
+      // The sender already added their own message optimistically and the poll hands it back
+      // a moment later. Deduping by id is what stops it appearing twice.
       const seen = new Set(current.map((m) => m.id));
       const fresh = incoming.filter((m) => !seen.has(m.id));
       if (fresh.length === 0) return current;
-
       return [...current, ...fresh].sort((a, b) => a.id - b.id);
     });
 
@@ -70,7 +74,6 @@ export function TicketThread({
     if (highest > lastId.current) lastId.current = highest;
   }, []);
 
-  // ── The live loop ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (status !== "open") return;
 
@@ -81,18 +84,16 @@ export function TicketThread({
       if (stopped || document.hidden) return schedule();
 
       try {
-        const res = await fetch(
-          `/api/tickets/${ticketId}/messages?since=${lastId.current}`,
-          { cache: "no-store" }
-        );
-
+        const res = await fetch(`/api/tickets/${initialTicket.id}/messages?since=${lastId.current}`, {
+          cache: "no-store",
+        });
         if (res.ok) {
           const data = await res.json();
           merge(data.messages ?? []);
           if (data.status && data.status !== status) setStatus(data.status);
         }
       } catch {
-        // A blip is not the end of the conversation. Try again on the next tick.
+        // A blip is not the end of the conversation. Try again next tick.
       }
 
       schedule();
@@ -102,7 +103,6 @@ export function TicketThread({
       if (!stopped) timer = setTimeout(poll, 3000);
     };
 
-    // Coming back to the tab should feel immediate rather than waiting out a tick.
     const onVisible = () => {
       if (!document.hidden) void poll();
     };
@@ -115,21 +115,20 @@ export function TicketThread({
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [ticketId, status, merge]);
+  }, [initialTicket.id, status, merge]);
 
-  // Follow the conversation as it grows.
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
-  async function send(event: React.FormEvent) {
-    event.preventDefault();
+  async function send(event?: React.FormEvent) {
+    event?.preventDefault();
     const text = body.trim();
-    if (!text || sending) return;
+    if (!text || sending || closed) return;
 
     setSending(true);
     try {
-      const res = await fetch(`/api/tickets/${ticketId}/messages`, {
+      const res = await fetch(`/api/tickets/${initialTicket.id}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ body: text }),
@@ -139,9 +138,6 @@ export function TicketThread({
 
       setBody("");
       merge([data.message]);
-      // Replying reopens a closed ticket, so reflect that rather than leaving the UI saying
-      // closed while the server disagrees.
-      if (status !== "open") setStatus("open");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't send that.");
@@ -153,7 +149,7 @@ export function TicketThread({
   async function changeStatus(next: "open" | "closed") {
     setBusyStatus(true);
     try {
-      const res = await fetch(`/api/tickets/${ticketId}/status`, {
+      const res = await fetch(`/api/tickets/${initialTicket.id}/status`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: next }),
@@ -162,9 +158,9 @@ export function TicketThread({
       if (!res.ok) throw new Error(data.error ?? "That didn't work.");
 
       setStatus(next);
-      // The status change writes a note into the thread; pick it up straight away rather
-      // than waiting for a poll that has just been switched off.
-      const fresh = await fetch(`/api/tickets/${ticketId}/messages?since=${lastId.current}`);
+      // The change writes a note into the thread. Pick it up now rather than waiting for a
+      // poll that may have just been switched off.
+      const fresh = await fetch(`/api/tickets/${initialTicket.id}/messages?since=${lastId.current}`);
       if (fresh.ok) merge((await fresh.json()).messages ?? []);
 
       toast.success(next === "closed" ? "Ticket closed." : "Ticket reopened.");
@@ -179,103 +175,201 @@ export function TicketThread({
   const closed = status !== "open";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-xl border bg-card">
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
-        {messages.map((message) =>
-          message.authorRole === "system" ? (
-            <p
-              key={message.id}
-              className="text-center text-xs text-muted-foreground"
-            >
-              {message.body} · {time(message.createdAt)}
-            </p>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+      {/* ── The conversation ──────────────────────────────────────────────── */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-5">
+          {messages.map((message, i) => (
+            <div key={message.id}>
+              {needsDateSeparator(messages, i) && (
+                <div className="my-4 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {dayLabel(message.createdAt)}
+                  </span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              )}
+
+              {message.authorRole === "system" ? (
+                <p className="py-2 text-center text-xs text-muted-foreground">{message.body}</p>
+              ) : (
+                <Bubble message={message} mine={message.authorRole === viewerRole} />
+              )}
+            </div>
+          ))}
+          <div ref={bottom} />
+        </div>
+
+        {/* ── The composer ───────────────────────────────────────────────────
+            The send button lives INSIDE the box rather than beside it, and there is no
+            divider above: the field is obviously a field, and a rule across the width was
+            separating it from a conversation it is part of. */}
+        <div className="p-4 pt-0">
+          {closed ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3">
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CircleCheck className="size-4 text-success" />
+                This ticket is closed. Replying reopens it.
+              </p>
+              <Button
+                variant="secondary"
+                size="lg"
+                disabled={busyStatus}
+                onClick={() => changeStatus("open")}
+              >
+                {busyStatus ? <LoaderCircle className="animate-spin" /> : <RotateCcw />}
+                Reopen
+              </Button>
+            </div>
           ) : (
-            <Bubble key={message.id} message={message} mine={message.authorRole === viewerRole} />
-          )
-        )}
-        <div ref={bottom} />
+            <form
+              onSubmit={send}
+              className="rounded-xl border bg-background transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+            >
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter sends, shift+enter breaks the line. Matches every chat anybody has
+                  // used, and a support reply is a chat message, not an essay.
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                rows={2}
+                maxLength={5000}
+                placeholder="Write a reply"
+                className="w-full resize-none bg-transparent px-3.5 py-3 text-sm outline-none"
+              />
+
+              <div className="flex items-center justify-between gap-3 px-3 pb-2.5">
+                <span className="text-[11px] text-muted-foreground">
+                  Enter to send · Shift+Enter for a new line
+                </span>
+                <Button type="submit" size="sm" disabled={sending || !body.trim()}>
+                  {sending ? <LoaderCircle className="animate-spin" /> : <Send />}
+                  Send
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
 
-      <div className="border-t p-4">
-        {closed ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CircleCheck className="size-4 text-success" />
-              This ticket is closed. Replying reopens it.
-            </p>
+      {/* ── Details ───────────────────────────────────────────────────────── */}
+      <aside className="w-full shrink-0 lg:w-72">
+        <div className="rounded-xl border bg-card">
+          <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Ticket details
+            </h2>
+            <StatusPill closed={closed} />
+          </div>
+
+          <dl className="grid grid-cols-2 gap-4 p-4">
+            <Field label="Priority">
+              <span className={priorityTone(initialTicket.priority)}>
+                {priorityLabel(initialTicket.priority)}
+              </span>
+            </Field>
+            <Field label="Category">{categoryLabel(initialTicket.category)}</Field>
+            <Field label="Messages">
+              <span className="flex items-center gap-1.5">
+                <MessageSquare className="size-3.5 text-muted-foreground" />
+                {messages.filter((m) => m.authorRole !== "system").length}
+              </span>
+            </Field>
+            <Field label="Opened">{shortDate(initialTicket.createdAt)}</Field>
+          </dl>
+
+          <div className="border-t p-4">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Actions
+            </h3>
             <Button
               variant="secondary"
               size="lg"
+              className="w-full"
               disabled={busyStatus}
-              onClick={() => changeStatus("open")}
+              onClick={() => changeStatus(closed ? "open" : "closed")}
             >
-              {busyStatus ? <LoaderCircle className="animate-spin" /> : <RotateCcw />}
-              Reopen
+              {busyStatus ? (
+                <LoaderCircle className="animate-spin" />
+              ) : closed ? (
+                <RotateCcw />
+              ) : (
+                <CircleCheck />
+              )}
+              {closed ? "Reopen ticket" : "Close ticket"}
             </Button>
           </div>
-        ) : null}
-
-        <form onSubmit={send} className={cn("flex gap-2", closed && "mt-3")}>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter sends, shift+enter breaks the line. Matches every chat anybody has
-              // used, and a support reply is a chat message, not an essay.
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send(e as unknown as React.FormEvent);
-              }
-            }}
-            rows={2}
-            maxLength={5000}
-            placeholder={closed ? "Reply to reopen this ticket" : "Write a reply"}
-            className="min-h-[2.75rem] flex-1 resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          />
-          <Button type="submit" size="lg" disabled={sending || !body.trim()}>
-            {sending ? <LoaderCircle className="animate-spin" /> : <Send />}
-            Send
-          </Button>
-        </form>
-
-        {canClose && !closed && (
-          <button
-            onClick={() => changeStatus("closed")}
-            disabled={busyStatus}
-            className="mt-3 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          >
-            Close this ticket
-          </button>
-        )}
-      </div>
+        </div>
+      </aside>
     </div>
   );
 }
 
-function Bubble({ message, mine }: { message: ThreadMessage; mine: boolean }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className={cn("flex", mine ? "justify-end" : "justify-start")}>
-      <div className={cn("max-w-[85%] sm:max-w-[70%]", mine && "text-right")}>
-        <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-          {mine ? (
-            <>
-              <span>{time(message.createdAt)}</span>
-              <span className="font-medium">{message.authorName}</span>
-            </>
-          ) : (
-            <>
-              <span className="font-medium">{message.authorName}</span>
-              <span>{time(message.createdAt)}</span>
-            </>
+    <div>
+      <dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-0.5 text-sm">{children}</dd>
+    </div>
+  );
+}
+
+function StatusPill({ closed }: { closed: boolean }) {
+  return (
+    <span
+      className={cn(
+        "flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        closed
+          ? "bg-muted text-muted-foreground ring-border"
+          : "bg-success/10 text-success ring-success/25"
+      )}
+    >
+      <span className={cn("size-1.5 rounded-full", closed ? "bg-muted-foreground" : "bg-success")} />
+      {closed ? "Closed" : "Open"}
+    </span>
+  );
+}
+
+function Bubble({ message, mine }: { message: ThreadMessage; mine: boolean }) {
+  const fromSupport = message.authorRole === "admin";
+
+  return (
+    <div className={cn("flex items-end gap-2 py-1.5", mine ? "justify-end" : "justify-start")}>
+      {!mine && (
+        <span
+          className={cn(
+            "flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
+            fromSupport ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
           )}
+          aria-hidden
+        >
+          {fromSupport ? <ShieldCheck className="size-3.5" /> : message.authorName.charAt(0).toUpperCase()}
+        </span>
+      )}
+
+      <div className={cn("max-w-[85%] sm:max-w-[75%]", mine && "text-right")}>
+        <div
+          className={cn(
+            "mb-1 flex items-center gap-2 text-[11px] text-muted-foreground",
+            mine && "justify-end"
+          )}
+        >
+          <span className="font-medium">{message.authorName}</span>
+          <span>{clock(message.createdAt)}</span>
         </div>
 
         <div
           className={cn(
             "inline-block whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-left text-sm",
-            mine
-              ? "bg-primary text-primary-foreground"
-              : "border bg-muted/40"
+            mine ? "bg-primary text-primary-foreground" : "border bg-muted/40"
           )}
         >
           {message.body}
@@ -285,16 +379,28 @@ function Bubble({ message, mine }: { message: ThreadMessage; mine: boolean }) {
   );
 }
 
-function time(iso: string): string {
-  const date = new Date(iso);
-  const sameDay = new Date().toDateString() === date.toDateString();
+/** True when this message is on a different day from the one before it. */
+function needsDateSeparator(messages: ThreadMessage[], index: number): boolean {
+  if (index === 0) return true;
 
-  return sameDay
-    ? date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-    : date.toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
+  const previous = new Date(messages[index - 1].createdAt).toDateString();
+  const current = new Date(messages[index].createdAt).toDateString();
+  return previous !== current;
 }
+
+function dayLabel(iso: string): string {
+  const date = new Date(iso);
+  const today = new Date().toDateString();
+  const yesterday = new Date(Date.now() - 86_400_000).toDateString();
+
+  if (date.toDateString() === today) return "Today";
+  if (date.toDateString() === yesterday) return "Yesterday";
+
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });

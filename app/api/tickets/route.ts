@@ -4,10 +4,13 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { logError } from "@/lib/events";
 import { rateLimit } from "@/lib/rate-limit";
 import { countOpenFor, createTicket } from "@/lib/tickets";
+import { CATEGORIES, PRIORITIES } from "@/lib/ticket-types";
 
 const schema = z.object({
   subject: z.string().trim().min(3, "Give it a short subject.").max(120),
-  body: z.string().trim().min(5, "Tell us what's happening.").max(5000),
+  body: z.string().trim().min(5, "Tell us what is happening.").max(5000),
+  priority: z.enum(PRIORITIES).default("normal"),
+  category: z.enum(CATEGORIES).default("general"),
 });
 
 export async function POST(request: Request) {

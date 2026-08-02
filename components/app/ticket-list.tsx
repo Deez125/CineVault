@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TicketWithMeta } from "@/lib/tickets";
+import { categoryLabel, priorityLabel, priorityTone } from "@/lib/ticket-types";
 
 /** The inbox row, shared by the member's list and the admin's. */
 export function TicketList({
@@ -51,6 +52,18 @@ export function TicketList({
                     closed
                   </span>
                 )}
+                {/* Only shown when it is not "normal". A badge on every row would be noise,
+                    and the point of a priority is that it stands out from the rest. */}
+                {ticket.priority !== "normal" && (
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ring-current/25",
+                      priorityTone(ticket.priority)
+                    )}
+                  >
+                    {priorityLabel(ticket.priority)}
+                  </span>
+                )}
               </div>
 
               <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
@@ -60,6 +73,8 @@ export function TicketList({
                     <span aria-hidden>·</span>
                   </>
                 )}
+                <span>{categoryLabel(ticket.category)}</span>
+                <span aria-hidden>·</span>
                 <span className="flex items-center gap-1">
                   <MessageSquare className="size-3" />
                   {ticket.messageCount}

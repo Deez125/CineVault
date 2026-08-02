@@ -60,9 +60,16 @@ export default async function AdminTicketPage({ params }: { params: Promise<{ id
       )}
 
       <TicketThread
-        ticketId={ticket.id}
-        initialStatus={ticket.status}
         viewerRole="admin"
+        ticket={{
+          id: ticket.id,
+          subject: ticket.subject,
+          status: ticket.status,
+          priority: ticket.priority,
+          category: ticket.category,
+          createdAt: ticket.createdAt.toISOString(),
+          closedAt: ticket.closedAt?.toISOString() ?? null,
+        }}
         initialMessages={messages.map((m) => ({
           id: m.id,
           authorRole: m.authorRole,

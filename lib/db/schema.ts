@@ -325,6 +325,18 @@ export const tickets = pgTable(
     status: text("status").notNull().default("open"),
 
     /**
+     * low | normal | high | urgent — set by the member when they open it.
+     *
+     * Their word on how urgent it is, not ours. An admin can see at a glance which of five
+     * open tickets to read first, and somebody marking everything urgent tells you something
+     * too.
+     */
+    priority: text("priority").notNull().default("normal"),
+
+    /** general | billing | plex | account — what it is about, for sorting the inbox. */
+    category: text("category").notNull().default("general"),
+
+    /**
      * Denormalised from the last message. The inbox sorts by it, and computing it with a
      * correlated subquery on every list would be a join per row for something written once
      * per message.

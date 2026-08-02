@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ticketMessages, tickets, users, type Ticket, type TicketMessage } from "@/lib/db/schema";
 import { displayName } from "@/lib/display-name";
 import { logEvent } from "@/lib/events";
+import type { Category, Priority } from "@/lib/ticket-types";
 
 /**
  * Support tickets.
@@ -12,6 +13,14 @@ import { logEvent } from "@/lib/events";
  * history by guessing a UUID, and support threads carry email addresses, billing complaints,
  * and occasionally passwords people should not have typed.
  */
+
+/**
+ * What an admin signs their replies as.
+ *
+ * Not the individual admin. A member wants to know CineVault answered, not which person did,
+ * and using a real name here would put a staff identity in front of every customer forever.
+ */
+export const SUPPORT_NAME = "CineVault Support";
 
 export const TICKET_OPEN = "open";
 export const TICKET_CLOSED = "closed";
@@ -145,7 +154,12 @@ export async function listMessages(
     .limit(500);
 }
 
-export type NewTicket = { subject: string; body: string };
+export type NewTicket = {
+  subject: string;
+  body: string;
+  priority: Priority;
+  category: Category;
+};
 
 export async function createTicket(
   input: NewTicket,
@@ -160,6 +174,8 @@ export async function createTicket(
       email: author.email,
       subject: input.subject,
       status: TICKET_OPEN,
+      priority: input.priority,
+      category: input.category,
       lastMessageAt: now,
       // They have obviously read the message they just wrote.
       userReadAt: now,
@@ -208,7 +224,7 @@ export async function addMessage(
       ticketId,
       authorId: author.id,
       authorRole: role,
-      authorName: author.isAdmin ? "CineVault" : displayName(author),
+      authorName: author.isAdmin ? SUPPORT_NAME : displayName(author),
       body,
       createdAt: now,
     })
@@ -262,7 +278,7 @@ export async function setStatus(
     ticketId,
     authorId: by.id,
     authorRole: "system",
-    authorName: by.isAdmin ? "CineVault" : by.email,
+    authorName: by.isAdmin ? SUPPORT_NAME : by.email,
     body: closing ? "Ticket closed." : "Ticket reopened.",
     createdAt: now,
   });
