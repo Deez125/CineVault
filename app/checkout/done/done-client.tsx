@@ -20,13 +20,14 @@ type State = "checking" | "paid" | "pending" | "failed";
  */
 export function DoneClient({ subscriptionId }: { subscriptionId: string | null }) {
   const router = useRouter();
-  const [state, setState] = useState<State>("checking");
+
+  // Derived at mount rather than corrected inside the effect. Arriving here with no
+  // subscription id is a fact we know during the first render, so setting "checking" and then
+  // immediately setting "failed" would render a spinner nobody should ever see.
+  const [state, setState] = useState<State>(subscriptionId ? "checking" : "failed");
 
   useEffect(() => {
-    if (!subscriptionId) {
-      setState("failed");
-      return;
-    }
+    if (!subscriptionId) return;
 
     let tries = 0;
     let stopped = false;

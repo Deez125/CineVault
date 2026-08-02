@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,35 +7,25 @@ import { Button } from "@/components/ui/button";
 /**
  * Light/dark switch.
  *
- * Renders a placeholder until mounted. The server has no idea which theme the browser will
- * resolve to, so rendering the real icon immediately guarantees a hydration mismatch and a
- * visible icon flip on every load.
+ * Both icons are rendered and CSS decides which is visible, rather than a `mounted` flag
+ * gating the render. The server cannot know which theme the browser will resolve to, so a
+ * flag-based version has to render nothing on the first pass and swap in the real icon after
+ * hydration — which is both a visible flicker and a synchronous setState inside an effect.
+ * Letting the `dark:` variant do it means the correct icon is right from the first paint.
  */
 export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  const isDark = resolvedTheme === "dark";
 
   return (
     <Button
       variant="ghost"
       size="icon"
       className={className}
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      onClick={() => setTheme(isDark ? "light" : "dark")}
+      aria-label="Toggle light and dark mode"
+      onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
     >
-      {mounted ? (
-        isDark ? (
-          <Sun className="size-4" />
-        ) : (
-          <Moon className="size-4" />
-        )
-      ) : (
-        <span className="size-4" />
-      )}
+      <Sun className="hidden size-4 dark:block" />
+      <Moon className="size-4 dark:hidden" />
     </Button>
   );
 }

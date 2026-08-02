@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+
+    // Reference material from the previous build, including its committed .next output.
+    // Read-only, deleted once the rebuild is done, and it accounts for every lint error in
+    // the project if left in — which makes the lint result useless for spotting our own.
+    // ESLint does not read .gitignore, so this has to be said here as well.
+    "REF/**",
   ]),
 ]);
 
