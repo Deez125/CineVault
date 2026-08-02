@@ -288,10 +288,9 @@ function RedactedLibraries({ count }: { count: number }) {
         ))}
       </ul>
 
-      {/* Fades the rows into the card so the list looks withheld rather than cut off. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-card to-transparent" />
-
-      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2.5 p-5">
+      {/* A solid panel rather than a fade. The rows are already obviously placeholders, so
+          the fade was only softening an edge that did not need softening. */}
+      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2.5 border-t bg-card p-5">
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Lock className="size-3.5" />
           Subscribe to see what&apos;s inside

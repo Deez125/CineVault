@@ -53,15 +53,9 @@ export function ServerCard({ user }: { user: User }) {
 
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
-      {/* Header band. The gradient is built from the accent, so it follows the colour index
-          rather than being its own hardcoded thing to forget about later. */}
-      <div
-        className="relative flex items-start justify-between gap-4 border-b p-5"
-        style={{
-          background:
-            "linear-gradient(100deg, color-mix(in oklch, var(--primary) 14%, transparent) 0%, transparent 60%)",
-        }}
-      >
+      {/* Flat. The border and the status badge already separate this from the rows below;
+          a gradient behind them was decoration doing a job nothing needed doing. */}
+      <div className="flex items-start justify-between gap-4 border-b bg-muted/30 p-5">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold">{SERVER_NAME}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">

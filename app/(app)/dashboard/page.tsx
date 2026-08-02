@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import { Gift, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { ServerCard } from "@/components/app/server-card";
-import { AnnouncementBanner } from "@/components/app/announcement-banner";
-import { listActiveFor } from "@/lib/announcements";
+import { Announcements } from "@/components/app/announcements";
+import { listForUser } from "@/lib/announcements";
 import { getCurrentUser } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth";
 import { emailVerificationRequired } from "@/lib/email";
@@ -16,9 +16,8 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  // Already filtered to what this person should see: switched on, inside its window, and not
-  // dismissed by them.
-  const notices = await listActiveFor(user.id);
+  // Both halves: what is showing, and what they have closed but can still get back to.
+  const notices = await listForUser(user.id);
 
   return (
     <>
@@ -28,9 +27,7 @@ export default async function DashboardPage() {
       />
 
       <div className="space-y-5">
-        {notices.map((notice) => (
-          <AnnouncementBanner key={notice.id} announcement={notice} />
-        ))}
+        <Announcements visible={notices.visible} dismissed={notices.dismissed} />
 
         {/* Recently added lives here, as a poster strip. Deliberately a visible placeholder
             rather than a hidden section: the space it will occupy is part of the layout, and

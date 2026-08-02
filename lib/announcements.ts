@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { announcementDismissals, announcements, type Announcement } from "@/lib/db/schema";
 import { logEvent } from "@/lib/events";
@@ -17,40 +17,66 @@ import { logEvent } from "@/lib/events";
 import type { Severity } from "./announcement-types";
 export { SEVERITIES, isSeverity, type Severity } from "./announcement-types";
 
+export type UserAnnouncements = {
+  /** Showing now. */
+  visible: Announcement[];
+  /** Closed by this person, but still live. Reachable behind the collapsed pill. */
+  dismissed: Announcement[];
+};
+
 /**
- * What this user should see right now.
+ * Every live announcement for this user, split by whether they have closed it.
  *
- * Three things have to be true: it is switched on, it is inside its window, and they have not
- * already dismissed it. The dismissal check is a NOT EXISTS rather than a join so an
- * announcement is never duplicated by a stray dismissal row, and it is done in SQL rather
- * than in JS so a dismissed banner never flashes on screen before being filtered out.
+ * Both halves are returned rather than just the visible ones, because closing a notice should
+ * put it out of the way — not destroy it. Somebody who dismisses "server down Sunday" and then
+ * wants to check the time needs a way back to it, and "wait for the admin to repost" is not a
+ * way back.
+ *
+ * One query with a LEFT JOIN, split in JS. Two queries would be two round trips for something
+ * that is one question, and the split itself is trivial.
  */
-export async function listActiveFor(userId: string): Promise<Announcement[]> {
+export async function listForUser(userId: string): Promise<UserAnnouncements> {
   const now = new Date();
 
-  return db
-    .select()
+  const rows = await db
+    .select({
+      announcement: announcements,
+      dismissedAt: announcementDismissals.dismissedAt,
+    })
     .from(announcements)
+    .leftJoin(
+      announcementDismissals,
+      and(
+        eq(announcementDismissals.announcementId, announcements.id),
+        eq(announcementDismissals.userId, userId)
+      )
+    )
     .where(
       and(
         eq(announcements.active, true),
         or(isNull(announcements.startsAt), lte(announcements.startsAt, now)),
-        or(isNull(announcements.endsAt), gte(announcements.endsAt, now)),
-        notExists(
-          db
-            .select({ one: sql`1` })
-            .from(announcementDismissals)
-            .where(
-              and(
-                eq(announcementDismissals.announcementId, announcements.id),
-                eq(announcementDismissals.userId, userId)
-              )
-            )
-        )
+        or(isNull(announcements.endsAt), gte(announcements.endsAt, now))
       )
     )
     .orderBy(desc(announcements.createdAt))
-    .limit(5);
+    .limit(20);
+
+  return {
+    visible: rows.filter((r) => !r.dismissedAt).map((r) => r.announcement),
+    dismissed: rows.filter((r) => r.dismissedAt).map((r) => r.announcement),
+  };
+}
+
+/** Put a dismissed announcement back. The inverse of dismissing it. */
+export async function restoreAnnouncement(announcementId: string, userId: string): Promise<void> {
+  await db
+    .delete(announcementDismissals)
+    .where(
+      and(
+        eq(announcementDismissals.announcementId, announcementId),
+        eq(announcementDismissals.userId, userId)
+      )
+    );
 }
 
 /** Everything, for the admin list. Includes off and expired ones. */

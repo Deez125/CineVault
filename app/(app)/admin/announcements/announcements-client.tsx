@@ -16,8 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AnnouncementBanner } from "@/components/app/announcement-banner";
+import { AnnouncementPreview } from "@/components/app/announcements";
 import { SEVERITIES } from "@/lib/announcement-types";
+import { toneOf } from "@/components/app/announcement-tones";
 import { cn } from "@/lib/utils";
 
 export type AdminAnnouncement = {
@@ -80,14 +81,13 @@ export function AnnouncementsClient({ items }: { items: AdminAnnouncement[] }) {
                 <div className="min-w-0 flex-1">
                   {/* The real banner, so what you see here is exactly what members get. */}
                   <div className={cn(!item.active && "opacity-50")}>
-                    <AnnouncementBanner
+                    <AnnouncementPreview
                       announcement={{
                         id: item.id,
                         title: item.title,
                         body: item.body,
                         severity: item.severity,
                       }}
-                      preview
                     />
                   </div>
 
@@ -279,22 +279,33 @@ function EditDialog({
 
           <div className="space-y-2">
             <Label>Tone</Label>
+            {/* Each option wears its own colour and icon, so picking one shows what it will
+                actually look like. A uniform blue outline told you nothing about what
+                "urgent" renders as. */}
             <div className="flex flex-wrap gap-2">
-              {SEVERITIES.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setSeverity(option)}
-                  className={cn(
-                    "rounded-lg border px-3 py-1.5 text-sm capitalize transition-colors",
-                    severity === option
-                      ? "border-primary bg-primary/10"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  )}
-                >
-                  {option === "destructive" ? "urgent" : option}
-                </button>
-              ))}
+              {SEVERITIES.map((option) => {
+                const tone = toneOf(option);
+                const Icon = tone.icon;
+                const active = severity === option;
+
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setSeverity(option)}
+                    aria-pressed={active}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors",
+                      active
+                        ? tone.selected
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                  >
+                    <Icon className={cn("size-3.5", active ? tone.icon_ : undefined)} />
+                    {tone.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
