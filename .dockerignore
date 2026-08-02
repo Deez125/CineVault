@@ -1,0 +1,37 @@
+# Everything that must not reach a build context.
+#
+# The first two blocks are the ones that matter. REF/ holds the previous build's env files,
+# including LIVE Stripe keys, and .env.local holds this one's — a file copied into an image
+# layer is recoverable from that image forever, even if a later layer deletes it.
+
+/REF
+.env
+.env.*
+!.env.example
+
+/node_modules
+/.next
+/dist
+/out
+/build
+
+.git
+.github
+.gitignore
+
+*.db
+*.db-shm
+*.db-wal
+*.sql.gz
+/backups
+
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+npm-debug.log*
+*.tsbuildinfo
+
+# Local-only compose. Production is docker-compose.prod.yml.
+docker-compose.yml
+README.md

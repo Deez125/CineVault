@@ -1,0 +1,116 @@
+# CineVault in production. This is the file Coolify deploys.
+#
+# Three services from two images: Postgres, the web app, and the background worker. The web
+# and worker are the SAME image with a different command — see the Dockerfile header.
+#
+# Every secret comes from the environment. Coolify injects them from its own configuration,
+# so nothing sensitive is in this file and nothing sensitive is in the repository.
+#
+# WHAT MUST BE SET IN COOLIFY BEFORE THE FIRST DEPLOY
+#   POSTGRES_PASSWORD, SESSION_SECRET, STRIPE_SECRET_KEY,
+#   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, APP_URL, ADMIN_EMAILS
+#
+# The app validates all of it at boot and refuses to start if something required is missing.
+# A container that will not start is a far better failure than one that serves a broken
+# checkout.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cinevault
+      # No default. If this is unset the database refuses to start, which is the point —
+      # a compose default here is a production password living in a public repository.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: cinevault
+    volumes:
+      - cinevault-pgdata:/var/lib/postgresql/data
+    # NO ports section. The database is reachable only over the internal compose network;
+    # publishing 5432 would put it on the public internet behind one password.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinevault -d cinevault"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Compiled into the browser bundle, so it has to be present at BUILD time. It is a
+        # publishable key — safe to ship to browsers, which is what it is for.
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    command: ["web"]
+    depends_on:
+      postgres:
+        # Not just "started". The web container migrates before it serves, and a migration
+        # against a database still initialising fails the deploy.
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?APP_URL must be set}
+      DATABASE_URL: postgres://cinevault:${POSTGRES_PASSWORD}@postgres:5432/cinevault
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set}
+
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY must be set}
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?STRIPE_WEBHOOK_SECRET must be set}
+
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_MACHINE_ID: ${PLEX_MACHINE_ID:-}
+      PLEX_LIBRARY_SECTION_IDS: ${PLEX_LIBRARY_SECTION_IDS:-}
+      PLEX_CLIENT_IDENTIFIER: ${PLEX_CLIENT_IDENTIFIER:-}
+      PLEX_PROTECTED_USERS: ${PLEX_PROTECTED_USERS:-}
+
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+      ENABLE_DEBUG_PANEL: ${ENABLE_DEBUG_PANEL:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - "3000"
+    healthcheck:
+      # Hits the app itself rather than the port, so a process that is listening but broken
+      # is reported as unhealthy instead of fine.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    command: ["worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL}
+      DATABASE_URL: postgres://cinevault:${POSTGRES_PASSWORD}@postgres:5432/cinevault
+      SESSION_SECRET: ${SESSION_SECRET}
+
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+
+      PLEX_TOKEN: ${PLEX_TOKEN:-}
+      PLEX_MACHINE_ID: ${PLEX_MACHINE_ID:-}
+      PLEX_LIBRARY_SECTION_IDS: ${PLEX_LIBRARY_SECTION_IDS:-}
+      PLEX_CLIENT_IDENTIFIER: ${PLEX_CLIENT_IDENTIFIER:-}
+      PLEX_PROTECTED_USERS: ${PLEX_PROTECTED_USERS:-}
+
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      RECONCILE_INTERVAL_MS: ${RECONCILE_INTERVAL_MS:-300000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+volumes:
+  cinevault-pgdata:
