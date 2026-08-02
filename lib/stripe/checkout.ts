@@ -5,6 +5,8 @@ import { users, type User } from "@/lib/db/schema";
 import { stripe, isEntitling } from "./client";
 import { pickEntitling } from "@/lib/entitlements";
 import { displayName } from "@/lib/display-name";
+import { logError } from "@/lib/events";
+import { REFERRAL_COUPON_ID, shouldDiscount } from "@/lib/referrals";
 
 /**
  * Starting a subscription.
@@ -123,6 +125,7 @@ export async function startCheckout(user: User, priceId: string): Promise<Checko
     (await stripe.subscriptions.create({
       customer: customerId,
       items: [{ price: priceId }],
+      ...(await referralDiscount(user)),
       payment_behavior: "default_incomplete",
       // So the card they pay with becomes the card we renew with. Without this the
       // subscription has no default payment method and the SECOND invoice fails.
@@ -143,6 +146,37 @@ export async function startCheckout(user: User, priceId: string): Promise<Checko
   }
 
   return { clientSecret, subscriptionId: subscription.id };
+}
+
+/**
+ * The referred-friend discount, if this user has one coming.
+ *
+ * Returns something spreadable rather than a value, so the caller adds nothing at all when
+ * there is no discount — Stripe treats `discounts: []` as "clear the discounts", which is not
+ * the same as staying quiet.
+ *
+ * Every failure path here returns no discount rather than throwing. A missing coupon or a
+ * Stripe hiccup should cost somebody 50% off, not stop them subscribing entirely; and the
+ * referrer's own $10 is paid from the ledger later, so it survives regardless.
+ */
+async function referralDiscount(user: User): Promise<{ discounts?: [{ coupon: string }] }> {
+  try {
+    if (!(await shouldDiscount(user.id))) return {};
+
+    // Confirm the coupon exists before naming it. An unknown coupon id makes Stripe reject
+    // the whole subscription, which would turn "you have a discount" into "you cannot pay".
+    await stripe.coupons.retrieve(REFERRAL_COUPON_ID);
+
+    return { discounts: [{ coupon: REFERRAL_COUPON_ID }] };
+  } catch (err) {
+    await logError(
+      "could not apply referral discount",
+      { error: err instanceof Error ? err.message : String(err), coupon: REFERRAL_COUPON_ID },
+      { userId: user.id, email: user.email, actor: "user" }
+    );
+
+    return {};
+  }
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   verificationEmail,
 } from "@/lib/email";
 import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { attachReferral } from "@/lib/referrals";
 import {
   MIN_PASSWORD_LENGTH,
   fakeVerify,
@@ -108,6 +109,14 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
     actor: "user",
     message: `${email} created an account`,
   });
+
+  // The code comes from the hidden field, which the signup page fills from ?ref= — captured
+  // NOW rather than at checkout, because this is when the link was followed. Never throws: a
+  // bad code must not stop somebody creating an account.
+  const referralCode = formData.get("ref");
+  if (typeof referralCode === "string" && referralCode.trim()) {
+    await attachReferral({ id: userId, email }, referralCode);
+  }
 
   if (emailVerificationRequired()) {
     await issueVerificationEmail(userId, email);

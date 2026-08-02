@@ -61,7 +61,7 @@ const ACCOUNT_NAV: NavItem[] = [
   { href: "/dashboard/plex", label: "Plex", icon: Play },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/support", label: "Support", icon: MessageSquare },
-  { href: "/dashboard/referrals", label: "Referrals", icon: Gift, soon: true },
+  { href: "/dashboard/referrals", label: "Referrals", icon: Gift },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 

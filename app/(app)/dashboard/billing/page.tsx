@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Gift } from "lucide-react";
 
 import { PageHeader } from "@/components/app/page-header";
 import { PlanChooser } from "./plan-chooser";
@@ -8,6 +9,7 @@ import { requireUser } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getTiers } from "@/lib/stripe/tiers";
 import { getSubscriptionDetail } from "@/lib/stripe/subscription";
+import { REFEREE_PERCENT_OFF, shouldDiscount } from "@/lib/referrals";
 
 export const metadata: Metadata = { title: "Billing" };
 
@@ -49,7 +51,20 @@ export default async function BillingPage({
       {subscription ? (
         <BillingClient initial={subscription} tiers={tiers} />
       ) : (
-        <PlanChooser tiers={tiers} preselect={params.price} />
+        <>
+          {/* The prices below are the normal ones; Stripe applies the discount at the payment
+              step. Saying so here stops the card totals looking like a mistake. */}
+          {(await shouldDiscount(user.id)) && (
+            <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-success/30 bg-success/5 p-4 text-sm">
+              <Gift className="mt-0.5 size-4 shrink-0 text-success" />
+              <span>
+                You were invited, so your first month is {REFEREE_PERCENT_OFF}% off whichever plan
+                you pick. The discount is applied at checkout.
+              </span>
+            </div>
+          )}
+          <PlanChooser tiers={tiers} preselect={params.price} />
+        </>
       )}
     </>
   );

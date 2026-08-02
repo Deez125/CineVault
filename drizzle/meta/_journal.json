@@ -36,6 +36,13 @@
       "when": 1785662637414,
       "tag": "0004_stiff_alice",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785665004752,
+      "tag": "0005_sturdy_sabretooth",
+      "breakpoints": true
     }
   ]
 }

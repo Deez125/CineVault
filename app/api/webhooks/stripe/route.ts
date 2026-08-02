@@ -5,6 +5,7 @@ import { users } from "@/lib/db/schema";
 import { env } from "@/lib/env";
 import { stripe } from "@/lib/stripe/client";
 import { applyEntitlement } from "@/lib/entitlements";
+import { rewardForFirstPayment } from "@/lib/referrals";
 import { logError, logEvent } from "@/lib/events";
 
 /**
@@ -131,6 +132,14 @@ async function handle(event: Stripe.Event): Promise<void> {
             attempt: invoice.attempt_count,
           },
         });
+      }
+
+      if (event.type === "invoice.payment_succeeded" && invoice.amount_paid > 0) {
+        // Pay whoever referred this member, if anybody did and this is their first payment.
+        // Gated on `amount_paid > 0` so a $0 invoice — a full-coverage credit, a trial — does
+        // not trigger a payout; and the ledger's own pending check makes a redelivered webhook
+        // a no-op rather than a second $10.
+        await rewardForFirstPayment(user.id);
       }
 
       // Re-derive entitlement either way. A successful payment can move `past_due` back to

@@ -80,6 +80,21 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
 
     /**
+     * Their own referral code. Minted on first visit to the referrals page, not at signup —
+     * most accounts never share one, and a code nobody has seen is a row nobody needs.
+     */
+    referralCode: text("referral_code"),
+
+    /**
+     * Who sent them, captured at SIGNUP.
+     *
+     * Recorded then rather than at checkout because that is when the link was followed. If it
+     * waited for checkout, anybody who signed up today and paid next week would lose their
+     * referrer, and the person who introduced them would never be paid.
+     */
+    referredBy: uuid("referred_by"),
+
+    /**
      * Granted from the ADMIN_EMAILS allowlist. Checked on every admin request, never trusted
      * from the client. An empty allowlist means nobody is an admin.
      */
@@ -146,6 +161,9 @@ export const users = pgTable(
     uniqueIndex("users_username_key")
       .on(sql`lower(${t.username})`)
       .where(notNull("username")),
+    uniqueIndex("users_referral_code_key")
+      .on(sql`upper(${t.referralCode})`)
+      .where(notNull("referral_code")),
     index("users_stripe_subscription_id_idx").on(t.stripeSubscriptionId),
     index("users_is_member_idx").on(t.isMember),
   ]
@@ -391,6 +409,57 @@ export const ticketMessages = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// referrals
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One row per person who signed up through somebody's code.
+ *
+ * A ledger, not a flag. "Did this referral pay out?" and "how many has this person been paid
+ * for this month?" are both questions about history, and a boolean on the user row could
+ * answer neither — nor could it survive the referee deleting their account, which is exactly
+ * when you most want to know what was already paid.
+ */
+export const referrals = pgTable(
+  "referrals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    /** Who gets paid. SET NULL so the ledger outlives a closed account. */
+    referrerId: uuid("referrer_id").references(() => users.id, { onDelete: "set null" }),
+    referrerEmail: text("referrer_email").notNull(),
+
+    /** Who signed up. */
+    refereeId: uuid("referee_id").references(() => users.id, { onDelete: "set null" }),
+    refereeEmail: text("referee_email").notNull(),
+
+    /** The code as it was used, kept even if the referrer later regenerates theirs. */
+    code: text("code").notNull(),
+
+    /**
+     * pending  — signed up, has not paid yet
+     * rewarded — referee paid, referrer credited
+     * capped   — referee paid, but the referrer had hit the monthly limit
+     */
+    status: text("status").notNull().default("pending"),
+
+    /** Minor units actually credited. Null until it pays out. */
+    rewardAmount: integer("reward_amount"),
+    rewardCurrency: text("reward_currency"),
+    rewardedAt: timestamp("rewarded_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One referral per referee, ever. Without this a webhook redelivery would pay the
+    // referrer twice for the same person.
+    uniqueIndex("referrals_referee_key").on(t.refereeId).where(notNull("referee_id")),
+    index("referrals_referrer_idx").on(t.referrerId),
+    index("referrals_status_idx").on(t.status),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // kv
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -412,3 +481,4 @@ export type NewEvent = typeof events.$inferInsert;
 export type Announcement = typeof announcements.$inferSelect;
 export type Ticket = typeof tickets.$inferSelect;
 export type TicketMessage = typeof ticketMessages.$inferSelect;
+export type Referral = typeof referrals.$inferSelect;

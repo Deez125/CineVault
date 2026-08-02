@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Gift } from "lucide-react";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { Input } from "@/components/ui/input";
@@ -7,16 +8,22 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { signupAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
+import { REFEREE_PERCENT_OFF, findByCode } from "@/lib/referrals";
+import { displayName } from "@/lib/display-name";
 
 export const metadata: Metadata = { title: "Create an account" };
 
 export default async function SignupPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; ref?: string }>;
 }) {
   const params = await searchParams;
   if (await getSessionUser()) redirect(params.next ?? "/dashboard");
+
+  // Looked up here purely so the page can say whose invite this is. The code itself is
+  // re-checked server-side at signup; nothing trusts this render.
+  const referrer = params.ref ? await findByCode(params.ref) : null;
 
   return (
     <>
@@ -27,8 +34,19 @@ export default async function SignupPage({
         </p>
       </div>
 
+      {referrer && (
+        <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-success/30 bg-success/5 p-4 text-sm">
+          <Gift className="mt-0.5 size-4 shrink-0 text-success" />
+          <span>
+            <b>{displayName(referrer)}</b> invited you. You&apos;ll get{" "}
+            {REFEREE_PERCENT_OFF}% off your first month, whichever plan you pick.
+          </span>
+        </div>
+      )}
+
       <AuthForm action={signupAction} submitLabel="Create account" pendingLabel="Creating account">
         {params.next && <input type="hidden" name="next" value={params.next} />}
+        {params.ref && <input type="hidden" name="ref" value={params.ref} />}
 
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>

@@ -3,6 +3,7 @@ import "../lib/load-env";
 import Stripe from "stripe";
 import { stripe, isLiveMode, formatMoney } from "../lib/stripe/client";
 import { TIER_PRODUCT_MARKER } from "../lib/stripe/tiers";
+import { REFERRAL_COUPON_ID, REFEREE_PERCENT_OFF } from "../lib/referrals";
 
 /**
  * Creates the CineVault product catalogue in Stripe.
@@ -108,6 +109,7 @@ async function main() {
     results.push({ tier: spec, productId: product.id, priceId: price.id, created });
   }
 
+  await ensureReferralCoupon();
   await ensurePortalConfiguration();
 
   console.log("\n  Catalogue:\n");
@@ -249,6 +251,43 @@ async function ensurePrice(
   }
 
   return { price, created: true };
+}
+
+/**
+ * The coupon a referred friend gets on their first month.
+ *
+ * Created with an explicit `id` rather than a generated one, so the app can name it as a
+ * constant instead of storing yet another id in the environment. A coupon's percentage is
+ * immutable once created; if the offer ever changes, that means a new id, and the old coupon
+ * stays valid for anyone mid-discount.
+ */
+async function ensureReferralCoupon() {
+  try {
+    const existing = await stripe.coupons.retrieve(REFERRAL_COUPON_ID);
+
+    if (existing.percent_off !== REFEREE_PERCENT_OFF) {
+      console.log(
+        `  ! coupon ${REFERRAL_COUPON_ID} is ${existing.percent_off}% off, but the app expects ` +
+          `${REFEREE_PERCENT_OFF}%. Stripe coupons are immutable — change REFERRAL_COUPON_ID in ` +
+          `lib/referrals.ts to mint a new one.`
+      );
+    }
+
+    return;
+  } catch {
+    // Not there yet.
+  }
+
+  console.log(`  + creating coupon ${REFERRAL_COUPON_ID} (${REFEREE_PERCENT_OFF}% off once)`);
+
+  await stripe.coupons.create({
+    id: REFERRAL_COUPON_ID,
+    name: "Referred friend — first month",
+    percent_off: REFEREE_PERCENT_OFF,
+    // `once` is the whole offer: one discounted month, then the normal price. `repeating` or
+    // `forever` here would quietly halve someone's plan for life.
+    duration: "once",
+  });
 }
 
 /**
