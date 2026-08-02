@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { CircleCheck, TriangleAlert } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageHeader } from "@/components/app/page-header";
+import { FlashToast } from "@/components/app/flash-toast";
 import { PlexClient } from "./plex-client";
 import { requireUser } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -31,34 +30,32 @@ export default async function PlexPage({
     ? params.message || ERRORS[params.error] || "That didn't work. Try again."
     : null;
 
-  // Read from Plex, cached for ten minutes, and degrades to an empty list rather than taking
-  // the page down when Plex is unreachable.
   const libraries = await getSharedLibraries();
+
+  /**
+   * Titles are only sent to people who have a plan.
+   *
+   * Blurring them in CSS would not do: the text would still be in the HTML, and anybody could
+   * read it out of the page source in two clicks. If it should not be known, it should not be
+   * sent. Non-members get the COUNT, which is a selling point rather than a leak.
+   */
+  const canSeeTitles = user.isMember;
 
   return (
     <>
       <PageHeader title="Plex" subtitle="The account you watch on" />
 
-      {error && (
-        <Alert variant="destructive" className="mb-5">
-          <TriangleAlert />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {params.linked && !error && (
-        <Alert className="mb-5">
-          <CircleCheck className="text-success" />
-          <AlertDescription>
-            Linked as {user.plexUsername}.{" "}
-            {user.shareState === "invited"
-              ? "Your invite is on its way. Accept it at app.plex.tv."
-              : user.isMember
-                ? "Setting up your access now."
-                : "Your invite goes out as soon as you have a plan."}
-          </AlertDescription>
-        </Alert>
-      )}
+      <FlashToast
+        message={
+          error ??
+          (params.linked
+            ? user.shareState === "invited"
+              ? `Linked as ${user.plexUsername}. Accept the invite at app.plex.tv.`
+              : `Linked as ${user.plexUsername}.`
+            : null)
+        }
+        variant={error ? "error" : "success"}
+      />
 
       <PlexClient
         state={{
@@ -67,7 +64,12 @@ export default async function PlexPage({
           isMember: user.isMember,
           streamLimit: user.streamLimit,
         }}
-        libraries={libraries.map((l) => ({ id: l.id, title: l.title, type: l.type }))}
+        libraries={
+          canSeeTitles
+            ? libraries.map((l) => ({ id: l.id, title: l.title, type: l.type }))
+            : []
+        }
+        libraryCount={libraries.length}
       />
     </>
   );

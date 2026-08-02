@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   CircleCheck,
@@ -8,6 +9,7 @@ import {
   ExternalLink,
   Film,
   LoaderCircle,
+  Lock,
   Music,
   Tv,
   TriangleAlert,
@@ -42,9 +44,13 @@ const SERVER_NAME = "CineVault (Server 1)";
 export function PlexClient({
   state,
   libraries,
+  libraryCount,
 }: {
   state: PlexState;
+  /** Empty for non-members: the titles are never sent to them at all. */
   libraries: PlexLibrary[];
+  /** How many there are. Safe to show to anybody, and it is a selling point. */
+  libraryCount: number;
 }) {
   const [unlinking, setUnlinking] = useState(false);
   const [going, setGoing] = useState(false);
@@ -60,31 +66,28 @@ export function PlexClient({
           {linked ? (
             <>
               <div className="flex flex-wrap items-start justify-between gap-4 border-b p-6">
-                <div className="flex items-center gap-4">
-                  <span
-                    className="flex size-12 shrink-0 items-center justify-center rounded-full"
-                    style={{ background: "color-mix(in oklch, var(--plex) 18%, transparent)" }}
-                  >
-                    <FaAngleRight className="size-5 text-plex" />
-                  </span>
-                  <div>
-                    <div className="text-xl font-semibold">{state.plexUsername}</div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-sm">
-                      {shared ? (
-                        <>
-                          <CircleCheck className="size-4 text-success" />
-                          <span className="text-muted-foreground">
-                            Shared with {SERVER_NAME}
-                          </span>
-                        </>
-                      ) : state.isMember ? (
-                        <span className="text-warning">Invite hasn&apos;t gone out yet</span>
-                      ) : (
-                        <span className="text-muted-foreground">
-                          Waiting on a plan before the invite goes out
-                        </span>
-                      )}
-                    </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <FaAngleRight className="size-5 shrink-0 text-plex" />
+                    <span className="text-xl font-semibold">{state.plexUsername}</span>
+                  </div>
+
+                  <div className="mt-1 flex items-center gap-1.5 text-sm">
+                    {shared ? (
+                      <>
+                        <CircleCheck className="size-4 text-success" />
+                        <span className="text-muted-foreground">Shared with {SERVER_NAME}</span>
+                      </>
+                    ) : state.isMember ? (
+                      <span className="text-warning">Invite hasn&apos;t gone out yet</span>
+                    ) : (
+                      <Link
+                        href="/dashboard/billing"
+                        className="text-primary underline-offset-2 hover:underline"
+                      >
+                        Choose a plan to get access
+                      </Link>
+                    )}
                   </div>
                 </div>
 
@@ -108,7 +111,7 @@ export function PlexClient({
 
               <dl className="grid gap-px bg-border sm:grid-cols-3">
                 <Stat label="Watching at once" value={state.isMember ? String(state.streamLimit) : "—"} />
-                <Stat label="Libraries" value={libraries.length ? String(libraries.length) : "—"} />
+                <Stat label="Libraries" value={libraryCount ? String(libraryCount) : "—"} />
                 <Stat
                   label="Access"
                   value={shared ? "Ready" : state.isMember ? "Pending" : "No plan"}
@@ -123,14 +126,8 @@ export function PlexClient({
             </>
           ) : (
             <div className="flex h-full flex-col justify-center p-8 sm:p-10">
-              <span
-                className="flex size-14 items-center justify-center rounded-2xl"
-                style={{ background: "color-mix(in oklch, var(--plex) 18%, transparent)" }}
-              >
-                <FaAngleRight className="size-7 text-plex" />
-              </span>
-
-              <h2 className="mt-6 text-2xl font-semibold tracking-tight">
+              <h2 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
+                <FaAngleRight className="size-6 shrink-0 text-plex" />
                 Connect your Plex account
               </h2>
               <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
@@ -172,12 +169,19 @@ export function PlexClient({
         <section className="rounded-xl border bg-card">
           <div className="border-b px-5 py-3.5">
             <h2 className="text-sm font-semibold">Included libraries</h2>
+            {/* The plan changes how many people can watch at once, never what is available.
+                Saying "included with every plan" implied the libraries were the thing being
+                sold in tiers, which is exactly backwards. */}
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Every plan gets all of them
+              {state.isMember
+                ? "The same libraries on every plan"
+                : `The same ${libraryCount} libraries on every plan`}
             </p>
           </div>
 
-          {libraries.length === 0 ? (
+          {!state.isMember ? (
+            <RedactedLibraries count={libraryCount} />
+          ) : libraries.length === 0 ? (
             <p className="p-5 text-sm text-muted-foreground">
               Library list is unavailable right now.
             </p>
@@ -251,6 +255,51 @@ function Stat({
         {label}
       </dt>
       <dd className={cn("mt-1 text-lg font-semibold tabular-nums", tones[tone])}>{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * The library list for somebody without a plan.
+ *
+ * The bars are placeholders, not hidden text. The real titles were never sent to this
+ * browser, so there is nothing to reveal by inspecting the page — which is the difference
+ * between actually withholding something and merely making it inconvenient to read.
+ *
+ * The count is shown on purpose. "Ten libraries you can't see yet" is a reason to subscribe;
+ * an empty box is just a broken panel.
+ */
+function RedactedLibraries({ count }: { count: number }) {
+  // Varied widths so it reads as a list of names rather than a loading skeleton.
+  const widths = ["72%", "58%", "80%", "64%", "76%", "54%", "68%", "84%", "60%", "74%"];
+  const rows = Math.max(count, 6);
+
+  return (
+    <div className="relative">
+      <ul aria-hidden className="max-h-[22rem] overflow-hidden">
+        {Array.from({ length: rows }, (_, i) => (
+          <li key={i} className="flex items-center gap-2.5 border-b px-5 py-2.5 last:border-0">
+            <span className="size-4 shrink-0 rounded-sm bg-muted-foreground/25" />
+            <span
+              className="h-3.5 rounded-sm bg-muted-foreground/20"
+              style={{ width: widths[i % widths.length] }}
+            />
+          </li>
+        ))}
+      </ul>
+
+      {/* Fades the rows into the card so the list looks withheld rather than cut off. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-card to-transparent" />
+
+      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2.5 p-5">
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Lock className="size-3.5" />
+          Subscribe to see what&apos;s inside
+        </p>
+        <Button size="sm" render={<Link href="/dashboard/billing" />}>
+          Choose a plan
+        </Button>
+      </div>
     </div>
   );
 }

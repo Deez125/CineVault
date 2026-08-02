@@ -23,7 +23,10 @@ const money = (minor: number, currency = "usd") =>
  * playing at a t..." is not describing anything.
  */
 export function PlanChooser({ tiers, preselect }: { tiers: Tier[]; preselect?: string }) {
-  const fallback = tiers[1]?.priceId ?? tiers[0]?.priceId ?? "";
+  // The cheapest, when they haven't picked one from the marketing page. Defaulting to a
+  // dearer plan nudges people into paying more than they meant to, which is a refund and a
+  // bad taste rather than extra revenue. tiers is sorted by stream count.
+  const fallback = tiers[0]?.priceId ?? "";
   const wanted = tiers.some((t) => t.priceId === preselect) ? preselect! : fallback;
 
   const [selected, setSelected] = useState(wanted);
