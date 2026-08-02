@@ -1,5 +1,5 @@
+import "./lib/load-env";
 import { defineConfig } from "drizzle-kit";
-import "dotenv/config";
 
 /**
  * Migrations are generated as plain SQL files under ./drizzle and committed.

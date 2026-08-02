@@ -13,6 +13,7 @@
     "db:migrate": "tsx lib/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "stripe:setup": "tsx scripts/stripe-setup.ts",
+    "stripe:tiers": "tsx scripts/stripe-tiers.ts",
     "plex:discover": "tsx scripts/plex-discover.ts",
     "admin:grant": "tsx scripts/admin-grant.ts"
   },
