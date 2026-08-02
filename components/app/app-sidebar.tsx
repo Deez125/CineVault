@@ -72,7 +72,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/support", label: "Support inbox", icon: MessageSquare, soon: true },
   { href: "/admin/requests", label: "Requests", icon: ListVideo, soon: true },
-  { href: "/admin/announcements", label: "Announcements", icon: Megaphone, soon: true },
+  { href: "/admin/announcements", label: "Announcements", icon: Megaphone },
   { href: "/admin/activity", label: "Activity log", icon: Activity },
   { href: "/admin/settings", label: "Service settings", icon: SlidersHorizontal, soon: true },
 ];

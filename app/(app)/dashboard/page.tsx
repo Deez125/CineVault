@@ -1,12 +1,10 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { and, eq, isNull, lte, or, gte } from "drizzle-orm";
-import { Gift, Info, Sparkles } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Gift, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { ServerCard } from "@/components/app/server-card";
-import { db } from "@/lib/db";
-import { announcements } from "@/lib/db/schema";
+import { AnnouncementBanner } from "@/components/app/announcement-banner";
+import { listActiveFor } from "@/lib/announcements";
 import { getCurrentUser } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth";
 import { emailVerificationRequired } from "@/lib/email";
@@ -18,7 +16,9 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const notices = await activeAnnouncements();
+  // Already filtered to what this person should see: switched on, inside its window, and not
+  // dismissed by them.
+  const notices = await listActiveFor(user.id);
 
   return (
     <>
@@ -29,11 +29,7 @@ export default async function DashboardPage() {
 
       <div className="space-y-5">
         {notices.map((notice) => (
-          <Alert key={notice.id}>
-            <Info />
-            <AlertTitle>{notice.title}</AlertTitle>
-            {notice.body && <AlertDescription>{notice.body}</AlertDescription>}
-          </Alert>
+          <AnnouncementBanner key={notice.id} announcement={notice} />
         ))}
 
         {/* Recently added lives here, as a poster strip. Deliberately a visible placeholder
@@ -71,27 +67,4 @@ export default async function DashboardPage() {
       </div>
     </>
   );
-}
-
-/**
- * Announcements that should be showing right now.
- *
- * A null start or end means "no bound", so a notice with neither is simply on until it is
- * turned off. Filtered in SQL rather than in JS so an old announcement never briefly renders
- * before being removed.
- */
-async function activeAnnouncements() {
-  const now = new Date();
-
-  return db
-    .select()
-    .from(announcements)
-    .where(
-      and(
-        eq(announcements.active, true),
-        or(isNull(announcements.startsAt), lte(announcements.startsAt, now)),
-        or(isNull(announcements.endsAt), gte(announcements.endsAt, now))
-      )
-    )
-    .limit(5);
 }
