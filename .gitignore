@@ -17,6 +17,14 @@
 .env.*
 !.env.example
 
+# Filled-in environment files for pasting into a host's dashboard. These hold REAL
+# credentials, and they are named without a leading dot — which means the .env rules above do
+# NOT catch them. Spelled out individually rather than trusted to a pattern.
+*.env.txt
+env.txt
+coolify.env
+coolify.env.txt
+
 # database dumps
 *.db
 *.db-shm
