@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Settings } from "lucide-react";
+
 import { PageHeader } from "@/components/app/page-header";
 import { SettingsClient } from "./settings-client";
 import { requireUser } from "@/lib/auth";
@@ -15,7 +15,7 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <PageHeader icon={Settings} title="Settings" subtitle="Your account" />
+      <PageHeader title="Settings" subtitle="Your account" />
 
       <SettingsClient
         email={user.email}

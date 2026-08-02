@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { CircleCheck, Play, TriangleAlert } from "lucide-react";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageHeader } from "@/components/app/page-header";
 import { PlexClient } from "./plex-client";
 import { requireUser } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
+import { getSharedLibraries } from "@/lib/plex/client";
 
 export const metadata: Metadata = { title: "Plex" };
 
@@ -30,13 +31,13 @@ export default async function PlexPage({
     ? params.message || ERRORS[params.error] || "That didn't work. Try again."
     : null;
 
+  // Read from Plex, cached for ten minutes, and degrades to an empty list rather than taking
+  // the page down when Plex is unreachable.
+  const libraries = await getSharedLibraries();
+
   return (
     <>
-      <PageHeader
-        icon={Play}
-        title="Plex"
-        subtitle="The account you watch on"
-      />
+      <PageHeader title="Plex" subtitle="The account you watch on" />
 
       {error && (
         <Alert variant="destructive" className="mb-5">
@@ -64,7 +65,9 @@ export default async function PlexPage({
           plexUsername: user.plexUsername,
           shareState: user.shareState,
           isMember: user.isMember,
+          streamLimit: user.streamLimit,
         }}
+        libraries={libraries.map((l) => ({ id: l.id, title: l.title, type: l.type }))}
       />
     </>
   );

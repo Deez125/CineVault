@@ -253,6 +253,23 @@ export async function resolveSectionIds(): Promise<string[]> {
   return resolved;
 }
 
+/**
+ * The libraries a member actually gets, with their titles.
+ *
+ * For showing people what they are buying. Returns an empty array rather than throwing when
+ * Plex is unreachable or unconfigured: a panel listing what is included should degrade to
+ * listing nothing, not take the page down with it.
+ */
+export async function getSharedLibraries(): Promise<PlexSection[]> {
+  try {
+    const [sections, sharedIds] = await Promise.all([listSections(), resolveSectionIds()]);
+    const shared = new Set(sharedIds);
+    return sections.filter((section) => shared.has(section.id));
+  } catch {
+    return [];
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sharing
 // ═══════════════════════════════════════════════════════════════════════════════

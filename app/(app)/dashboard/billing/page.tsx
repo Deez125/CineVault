@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CreditCard } from "lucide-react";
+
 import { PageHeader } from "@/components/app/page-header";
 import { PlanChooser } from "./plan-chooser";
 import { BillingClient } from "./billing-client";
@@ -33,7 +33,7 @@ export default async function BillingPage({
   if (!subscription && params.checkout) {
     return (
       <>
-        <PageHeader icon={CreditCard} title="Billing" subtitle="Finishing your payment" />
+        <PageHeader title="Billing" subtitle="Finishing your payment" />
         <FinishingCheckout subscriptionId={params.checkout} />
       </>
     );
@@ -42,7 +42,6 @@ export default async function BillingPage({
   return (
     <>
       <PageHeader
-        icon={CreditCard}
         title="Billing"
         subtitle={subscription ? "Your plan, card and receipts" : "Choose a plan to get started"}
       />

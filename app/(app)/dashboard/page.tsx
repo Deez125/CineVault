@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { and, eq, isNull, lte, or, gte } from "drizzle-orm";
-import { Gift, LayoutGrid, Info, Sparkles } from "lucide-react";
+import { Gift, Info, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { PageHeader } from "@/components/app/page-header";
 import { ServerCard } from "@/components/app/server-card";
@@ -23,7 +23,6 @@ export default async function DashboardPage() {
   return (
     <>
       <PageHeader
-        icon={LayoutGrid}
         title="Overview"
         subtitle="Your access at a glance"
       />
