@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/app/page-header";
-import { ReferralLink } from "@/components/app/referral-link";
+import { InviteList } from "@/components/app/invite-list";
 import { StatCard } from "@/components/app/stat-card";
 import { requireUser } from "@/lib/auth";
 import { env } from "@/lib/env";
-import { formatMoney } from "@/lib/stripe/client";
+import { formatMoney } from "@/lib/money";
 import {
-  MONTHLY_REWARD_CAP,
+  LINK_LIFETIME_DAYS,
+  MONTHLY_LINK_CAP,
   REFEREE_PERCENT_OFF,
   REFERRAL_REWARD,
   getSummary,
@@ -14,17 +15,9 @@ import {
 
 export const metadata: Metadata = { title: "Referrals" };
 
-const STATUS: Record<string, { label: string; className: string }> = {
-  pending: { label: "Signed up", className: "text-muted-foreground" },
-  rewarded: { label: "Credited", className: "text-success" },
-  capped: { label: "Over the monthly cap", className: "text-warning" },
-};
-
 export default async function ReferralsPage() {
   const user = await requireUser("/dashboard/referrals");
   const summary = await getSummary(user);
-
-  const url = `${env.APP_URL}/signup?ref=${summary.code}`;
 
   return (
     <>
@@ -34,7 +27,12 @@ export default async function ReferralsPage() {
       />
 
       <div className="space-y-6">
-        <ReferralLink code={summary.code} url={url} />
+        <InviteList
+          invites={summary.invites}
+          slotsLeft={summary.slotsLeft}
+          cap={summary.cap}
+          origin={env.APP_URL}
+        />
 
         <div className="grid gap-4 sm:grid-cols-3">
           <StatCard
@@ -45,14 +43,20 @@ export default async function ReferralsPage() {
           />
           <StatCard
             label="Joined"
-            value={summary.rewarded + summary.capped}
-            hint={summary.pending > 0 ? `${summary.pending} signed up, not paid yet` : undefined}
+            value={summary.rewarded + summary.pending}
+            hint={
+              summary.pending > 0
+                ? `${summary.pending} haven't paid yet`
+                : summary.rewarded > 0
+                  ? "All paid up"
+                  : undefined
+            }
           />
           <StatCard
-            label="Left this month"
-            value={summary.remainingThisMonth}
-            hint={`${MONTHLY_REWARD_CAP} paid referrals a month`}
-            tone={summary.remainingThisMonth === 0 ? "warning" : "default"}
+            label="Invites left"
+            value={summary.slotsLeft}
+            hint={`${MONTHLY_LINK_CAP} a month`}
+            tone={summary.slotsLeft === 0 ? "warning" : "default"}
           />
         </div>
 
@@ -61,62 +65,32 @@ export default async function ReferralsPage() {
           <ol className="mt-3 space-y-2.5 text-sm text-muted-foreground">
             <li className="flex gap-3">
               <Step n={1} />
-              <span>Send someone your link.</span>
+              <span>
+                Generate an invite link and send it to somebody. You get {MONTHLY_LINK_CAP} a
+                month, and each one works for one person.
+              </span>
             </li>
             <li className="flex gap-3">
               <Step n={2} />
               <span>
-                They sign up and pick a plan — any plan — at {REFEREE_PERCENT_OFF}% off their first
-                month.
+                They sign up through it and pick a plan — any plan — at {REFEREE_PERCENT_OFF}% off
+                their first month.
               </span>
             </li>
             <li className="flex gap-3">
               <Step n={3} />
               <span>
-                Once their first payment goes through, {formatMoney(REFERRAL_REWARD)} comes off your
-                next bill. Not a one-off: every person you bring counts, up to{" "}
-                {MONTHLY_REWARD_CAP} a month.
+                Once their first payment goes through, {formatMoney(REFERRAL_REWARD)} comes off
+                your next bill.
               </span>
             </li>
           </ol>
+
+          <p className="mt-4 border-t pt-4 text-xs text-muted-foreground">
+            Invites last {LINK_LIFETIME_DAYS} days. If one expires, or you revoke it before
+            anybody uses it, you get that slot back straight away.
+          </p>
         </div>
-
-        {summary.recent.length > 0 && (
-          <div className="overflow-hidden rounded-xl border bg-card">
-            <div className="border-b px-5 py-3.5 text-sm font-medium">Your referrals</div>
-            <ul className="divide-y">
-              {summary.recent.map((referral) => {
-                const status = STATUS[referral.status] ?? STATUS.pending;
-
-                return (
-                  <li
-                    key={referral.id}
-                    className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-5 py-3.5"
-                  >
-                    <div className="min-w-0">
-                      {/* Masked. You referred them, which does not entitle you to a readable
-                          list of your friends' email addresses on a page you might screen-share. */}
-                      <div className="truncate text-sm">{mask(referral.refereeEmail)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {referral.createdAt.toLocaleDateString(undefined, {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </div>
-                    </div>
-
-                    <div className={`text-sm ${status.className}`}>
-                      {referral.rewardAmount
-                        ? `+${formatMoney(referral.rewardAmount, referral.rewardCurrency ?? "usd")}`
-                        : status.label}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
       </div>
     </>
   );
@@ -128,14 +102,4 @@ function Step({ n }: { n: number }) {
       {n}
     </span>
   );
-}
-
-/** j••••@gmail.com — enough to recognise someone you invited, not enough to be a contact list. */
-function mask(email: string | null): string {
-  if (!email) return "Someone";
-
-  const [local, domain] = email.split("@");
-  if (!domain) return "Someone";
-
-  return `${local.slice(0, 1)}${"•".repeat(Math.max(3, Math.min(local.length - 1, 6)))}@${domain}`;
 }

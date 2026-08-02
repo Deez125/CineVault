@@ -8,7 +8,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { signupAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
-import { REFEREE_PERCENT_OFF, findByCode } from "@/lib/referrals";
+import { REFEREE_PERCENT_OFF, findInviter } from "@/lib/referrals";
 import { displayName } from "@/lib/display-name";
 
 export const metadata: Metadata = { title: "Create an account" };
@@ -23,7 +23,7 @@ export default async function SignupPage({
 
   // Looked up here purely so the page can say whose invite this is. The code itself is
   // re-checked server-side at signup; nothing trusts this render.
-  const referrer = params.ref ? await findByCode(params.ref) : null;
+  const referrer = params.ref ? await findInviter(params.ref) : null;
 
   return (
     <>

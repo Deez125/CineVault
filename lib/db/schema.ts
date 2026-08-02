@@ -80,12 +80,6 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
 
     /**
-     * Their own referral code. Minted on first visit to the referrals page, not at signup —
-     * most accounts never share one, and a code nobody has seen is a row nobody needs.
-     */
-    referralCode: text("referral_code"),
-
-    /**
      * Who sent them, captured at SIGNUP.
      *
      * Recorded then rather than at checkout because that is when the link was followed. If it
@@ -161,9 +155,6 @@ export const users = pgTable(
     uniqueIndex("users_username_key")
       .on(sql`lower(${t.username})`)
       .where(notNull("username")),
-    uniqueIndex("users_referral_code_key")
-      .on(sql`upper(${t.referralCode})`)
-      .where(notNull("referral_code")),
     index("users_stripe_subscription_id_idx").on(t.stripeSubscriptionId),
     index("users_is_member_idx").on(t.isMember),
   ]
@@ -409,6 +400,69 @@ export const ticketMessages = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// referral_links
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One invite, minted on demand.
+ *
+ * Deliberately not a permanent per-user code. A member presses "generate", spends one of
+ * their monthly slots, and gets back a link with its own life: it is used once, revoked, or
+ * it expires. That means the referrals page can show what happened to each individual invite
+ * rather than a single number that went up, and it puts a natural ceiling on how far one
+ * person's code can travel.
+ *
+ * The monthly cap is therefore spent HERE, at generation, not at payout. A slot buys the
+ * right to invite somebody; whether they ever pay is a separate question answered by the
+ * ledger below.
+ */
+export const referralLinks = pgTable(
+  "referral_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    /** Who minted it. CASCADE: an invite has no meaning without its owner. */
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    code: text("code").notNull(),
+
+    /**
+     * unused  — live, waiting for somebody
+     * used    — somebody signed up with it; terminal
+     * revoked — the owner killed it early and got the slot back
+     * expired — ran out of time and released the slot
+     *
+     * `expired` is written by the worker's sweep, but nothing depends on that having run:
+     * every read also checks expiresAt, so a link is dead on time whether or not a row has
+     * caught up with it.
+     */
+    status: text("status").notNull().default("unused"),
+
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+
+    /** Who redeemed it. SET NULL so a used link stays used if that account is deleted. */
+    usedById: uuid("used_by_id").references(() => users.id, { onDelete: "set null" }),
+    usedByEmail: text("used_by_email"),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Case-insensitive and global. Two live links with the same code would make redemption
+    // ambiguous, and codes are compared without regard to case because people retype them.
+    uniqueIndex("referral_links_code_key").on(sql`upper(${t.code})`),
+    // The slot count is "links this owner created this month", so it is read by owner and
+    // date on every page load.
+    index("referral_links_owner_idx").on(t.ownerId, t.createdAt),
+    index("referral_links_status_idx").on(t.status),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // referrals
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -433,13 +487,18 @@ export const referrals = pgTable(
     refereeId: uuid("referee_id").references(() => users.id, { onDelete: "set null" }),
     refereeEmail: text("referee_email").notNull(),
 
-    /** The code as it was used, kept even if the referrer later regenerates theirs. */
+    /** The link this came from. SET NULL so the ledger survives a deleted invite. */
+    linkId: uuid("link_id").references(() => referralLinks.id, { onDelete: "set null" }),
+
+    /** The code as it was used, copied here so the ledger reads on its own. */
     code: text("code").notNull(),
 
     /**
      * pending  — signed up, has not paid yet
      * rewarded — referee paid, referrer credited
-     * capped   — referee paid, but the referrer had hit the monthly limit
+     *
+     * There is no `capped` any more: the monthly limit is spent when the link is generated,
+     * so anything that made it as far as a signup has already been paid for.
      */
     status: text("status").notNull().default("pending"),
 
@@ -482,3 +541,4 @@ export type Announcement = typeof announcements.$inferSelect;
 export type Ticket = typeof tickets.$inferSelect;
 export type TicketMessage = typeof ticketMessages.$inferSelect;
 export type Referral = typeof referrals.$inferSelect;
+export type ReferralLink = typeof referralLinks.$inferSelect;

@@ -41,11 +41,7 @@ export function isEntitling(status: string | null | undefined): boolean {
   return Boolean(status && ENTITLING.has(status));
 }
 
-/** Format minor units for display. 2000 -> "$20", 1750 -> "$17.50". */
-export function formatMoney(minorUnits: number, currency = "usd"): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-    minimumFractionDigits: minorUnits % 100 === 0 ? 0 : 2,
-  }).format(minorUnits / 100);
-}
+// Re-exported so the many server-side callers that already import it from here keep working.
+// It lives in lib/money.ts because client components need it too, and they cannot import this
+// file — constructing the Stripe instance above drags node-only modules into the browser.
+export { formatMoney } from "@/lib/money";

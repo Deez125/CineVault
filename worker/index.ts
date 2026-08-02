@@ -5,6 +5,7 @@ import { assertEmailConfigured } from "../lib/email";
 import { reconcileAll } from "../lib/reconcile";
 import { refreshRecentlyAdded } from "../lib/plex/recently-added-cache";
 import { pruneExpiredSessions } from "../lib/maintenance";
+import { sweepExpiredLinks } from "../lib/referrals";
 import { pool } from "../lib/db";
 import { logError } from "../lib/events";
 
@@ -109,6 +110,12 @@ async function runRecentlyAdded() {
 async function runPrune() {
   const removed = await pruneExpiredSessions();
   if (removed > 0) console.log(`  pruned ${removed} expired session(s)`);
+
+  // Cosmetic, and deliberately hourly rather than urgent: an out-of-date invite already stops
+  // working and already stops holding a slot the moment its timestamp passes. This only makes
+  // the list say "Expired" rather than "Waiting" next to a date in the past.
+  const expired = await sweepExpiredLinks();
+  if (expired > 0) console.log(`  expired ${expired} referral link(s)`);
 }
 
 /**

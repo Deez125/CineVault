@@ -43,6 +43,13 @@
       "when": 1785665004752,
       "tag": "0005_sturdy_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785693984155,
+      "tag": "0006_low_bill_hollister",
+      "breakpoints": true
     }
   ]
 }

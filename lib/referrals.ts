@@ -1,22 +1,40 @@
 import crypto from "node:crypto";
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { referrals, users, type Referral, type User } from "@/lib/db/schema";
+import {
+  referralLinks,
+  referrals,
+  users,
+  type Referral,
+  type ReferralLink,
+  type User,
+} from "@/lib/db/schema";
 import { logEvent, logError } from "@/lib/events";
 import { stripe } from "@/lib/stripe/client";
 
 /**
  * Referrals.
  *
- * Refer somebody and you get $10 off your next bill, whatever plan you are on. They get 50%
- * off their first month, whatever plan they pick.
+ * A member mints an invite link. Somebody signs up with it and gets 50% off their first
+ * month; once that first payment actually clears, $10 comes off the member's next bill.
  *
  * The two halves are deliberately different shapes. A flat credit for the referrer is
  * predictable and easy to say out loud; a percentage for the referee is worth more on the
  * bigger plans, which is where you want the encouragement.
  *
- * Nothing pays out until the referee's first payment actually succeeds. A signup is not a
- * customer, and paying for signups is paying for email addresses.
+ * WHY LINKS RATHER THAN A PERMANENT CODE
+ *   A code that never changes is a code that ends up on a deals forum. Minting invites one at
+ *   a time, against a monthly allowance, keeps the scheme personal: the member can see what
+ *   became of each one, and the most any single leak can cost is one slot.
+ *
+ * WHERE THE MONTHLY LIMIT IS SPENT
+ *   At GENERATION, not at payout. Pressing the button is what costs a slot. Revoking or
+ *   letting one expire gives it back, so nobody is locked out for a month because a friend
+ *   said "maybe later" — but they cannot paper the internet with links either.
+ *
+ * WHAT NEVER CHANGES
+ *   Nothing pays out until the referee's first payment succeeds. A signup is not a customer,
+ *   and paying for signups is paying for email addresses.
  */
 
 /** Credit to the referrer, in minor units. Flat, regardless of either party's plan. */
@@ -27,13 +45,15 @@ export const REFERRAL_CURRENCY = "usd";
 export const REFEREE_PERCENT_OFF = 50;
 
 /**
- * Rewarded referrals per referrer per calendar month.
+ * Invite links a member may have outstanding per calendar month.
  *
- * Not a limit on how many people they may refer — a limit on how many they get PAID for. The
- * cap is what stops one person turning the scheme into an income, and three is enough that a
- * genuine enthusiast never notices it.
+ * Counted against links CREATED this month that are still alive or already used. Revoked and
+ * expired ones do not count, which is what makes the allowance forgiving rather than a trap.
  */
-export const MONTHLY_REWARD_CAP = 3;
+export const MONTHLY_LINK_CAP = 3;
+
+/** How long a fresh link stays usable. */
+export const LINK_LIFETIME_DAYS = 30;
 
 /** The Stripe coupon created by `npm run stripe:setup`. */
 export const REFERRAL_COUPON_ID = "cinevault-referral-first-month";
@@ -41,8 +61,9 @@ export const REFERRAL_COUPON_ID = "cinevault-referral-first-month";
 /**
  * Code alphabet.
  *
- * No O/0, I/1/L. These codes get read aloud and typed from screenshots, and a code that is
- * ambiguous in either direction generates a support ticket rather than a signup.
+ * No O/0, I/1/L. Even though these are only ever handed out inside a link, they are shown on
+ * screen next to it, and a code that is ambiguous when read aloud generates a support ticket
+ * rather than a signup.
  */
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH = 8;
@@ -54,58 +75,165 @@ function newCode(): string {
   return code;
 }
 
+function startOfMonth(): Date {
+  const d = new Date();
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 /**
- * This user's code, minting one the first time it is asked for.
+ * A link is dead when its status says so OR when its time has run out.
  *
- * Retries on collision rather than trusting randomness: 31^8 is a big space, but "big enough
- * that it will not happen" is how you get a duplicate in production.
+ * Both halves matter. The sweep that writes `expired` runs on a schedule, and a link must
+ * stop working the moment it expires rather than the next time a worker happens to look.
  */
-export async function getOrCreateCode(userId: string): Promise<string> {
-  const [existing] = await db
-    .select({ code: users.referralCode })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+function isLive(link: ReferralLink, now = new Date()): boolean {
+  return link.status === "unused" && link.expiresAt > now;
+}
 
-  if (existing?.code) return existing.code;
+/** SQL for the same rule, for the queries that have to count rather than inspect. */
+function liveOrUsed() {
+  return or(
+    eq(referralLinks.status, "used"),
+    and(eq(referralLinks.status, "unused"), gte(referralLinks.expiresAt, sql`now()`))
+  );
+}
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Minting
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export class LinkCapError extends Error {
+  readonly code = "LINK_CAP";
+  constructor(message: string) {
+    super(message);
+    this.name = "LinkCapError";
+  }
+}
+
+/** How many of this month's slots are still available to a member. */
+export async function slotsLeft(userId: string): Promise<number> {
+  const [{ n }] = await db
+    .select({ n: count() })
+    .from(referralLinks)
+    .where(
+      and(
+        eq(referralLinks.ownerId, userId),
+        gte(referralLinks.createdAt, startOfMonth()),
+        liveOrUsed()
+      )
+    );
+
+  return Math.max(0, MONTHLY_LINK_CAP - n);
+}
+
+/**
+ * Mint an invite, spending one of this month's slots.
+ *
+ * The cap is re-checked here rather than trusted from the page that rendered the button,
+ * because the button is a picture of the truth a moment ago and two tabs are one click apart.
+ */
+export async function generateLink(userId: string): Promise<ReferralLink> {
+  if ((await slotsLeft(userId)) <= 0) {
+    throw new LinkCapError(
+      `You've used all ${MONTHLY_LINK_CAP} invites this month. Revoke an unused one, or wait for next month.`
+    );
+  }
+
+  const expiresAt = new Date(Date.now() + LINK_LIFETIME_DAYS * 24 * 60 * 60 * 1000);
+
+  // Retry on collision rather than trusting randomness: 31^8 is a big space, but "big enough
+  // that it will not happen" is how you get a duplicate in production.
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const code = newCode();
-
     try {
-      await db
-        .update(users)
-        .set({ referralCode: code, updatedAt: new Date() })
-        .where(eq(users.id, userId));
+      const [link] = await db
+        .insert(referralLinks)
+        .values({ ownerId: userId, code: newCode(), expiresAt })
+        .returning();
 
-      return code;
+      return link;
     } catch {
       // Unique violation on the code. Try another.
     }
   }
 
-  throw new Error("could not generate a referral code");
-}
-
-/** Who owns this code, or null. Case-insensitive, because people retype them. */
-export async function findByCode(code: string): Promise<User | null> {
-  const trimmed = code.trim();
-  if (!trimmed) return null;
-
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(sql`upper(${users.referralCode}) = upper(${trimmed})`)
-    .limit(1);
-
-  return user ?? null;
+  throw new Error("could not generate a referral link");
 }
 
 /**
- * Attach a new signup to whoever referred them.
+ * Kill an unused link and hand the slot back.
  *
- * Called at signup, and it never throws — a bad or expired code must not stop somebody
- * creating an account. The worst outcome of an unrecognised code is that nobody gets paid.
+ * Scoped to the owner in the WHERE clause, not checked first and updated after — the check
+ * and the write have to be the same statement or a well-timed request revokes somebody
+ * else's invite.
+ */
+export async function revokeLink(userId: string, linkId: string): Promise<boolean> {
+  const revoked = await db
+    .update(referralLinks)
+    .set({ status: "revoked", revokedAt: new Date() })
+    .where(
+      and(
+        eq(referralLinks.id, linkId),
+        eq(referralLinks.ownerId, userId),
+        eq(referralLinks.status, "unused")
+      )
+    )
+    .returning({ id: referralLinks.id });
+
+  return revoked.length > 0;
+}
+
+/**
+ * Mark links that have run out of time.
+ *
+ * Cosmetic only — `isLive` already refuses an out-of-date link and the slot count already
+ * ignores one. This exists so the list reads "Expired" instead of "Unused" next to a date in
+ * the past.
+ */
+export async function sweepExpiredLinks(): Promise<number> {
+  const expired = await db
+    .update(referralLinks)
+    .set({ status: "expired" })
+    .where(and(eq(referralLinks.status, "unused"), lt(referralLinks.expiresAt, new Date())))
+    .returning({ id: referralLinks.id });
+
+  return expired.length;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Redemption
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** The live link for this code, or null. Case-insensitive, because people retype them. */
+export async function findLink(code: string): Promise<ReferralLink | null> {
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+
+  const [link] = await db
+    .select()
+    .from(referralLinks)
+    .where(sql`upper(${referralLinks.code}) = upper(${trimmed})`)
+    .limit(1);
+
+  if (!link || !isLive(link)) return null;
+  return link;
+}
+
+/** Who is inviting, for the "X invited you" line on the signup page. */
+export async function findInviter(code: string): Promise<User | null> {
+  const link = await findLink(code);
+  if (!link) return null;
+
+  const [owner] = await db.select().from(users).where(eq(users.id, link.ownerId)).limit(1);
+  return owner ?? null;
+}
+
+/**
+ * Redeem an invite for a brand-new account.
+ *
+ * Called at signup, and it never throws — a dead or unrecognised link must not stop somebody
+ * creating an account. The worst outcome is that nobody gets paid.
  */
 export async function attachReferral(
   newUser: Pick<User, "id" | "email">,
@@ -114,23 +242,43 @@ export async function attachReferral(
   if (!code) return;
 
   try {
-    const referrer = await findByCode(code);
+    const link = await findLink(code);
 
-    // Self-referral through your own code is the one case worth blocking outright: it is not
-    // a referral, it is a discount you wrote yourself.
-    if (!referrer || referrer.id === newUser.id) return;
+    // Redeeming your own invite is the one case worth blocking outright: it is not a
+    // referral, it is a discount you wrote yourself.
+    if (!link || link.ownerId === newUser.id) return;
+
+    // Claim it with a CONDITIONAL update, and believe the result rather than the read above.
+    // Two people opening the same link at the same moment both pass `findLink`; only one can
+    // win this statement, and the loser simply signs up without a discount.
+    const claimed = await db
+      .update(referralLinks)
+      .set({
+        status: "used",
+        usedById: newUser.id,
+        usedByEmail: newUser.email,
+        usedAt: new Date(),
+      })
+      .where(and(eq(referralLinks.id, link.id), eq(referralLinks.status, "unused")))
+      .returning({ id: referralLinks.id });
+
+    if (claimed.length === 0) return;
+
+    const [owner] = await db.select().from(users).where(eq(users.id, link.ownerId)).limit(1);
+    if (!owner) return;
 
     await db
       .update(users)
-      .set({ referredBy: referrer.id, updatedAt: new Date() })
+      .set({ referredBy: owner.id, updatedAt: new Date() })
       .where(eq(users.id, newUser.id));
 
     await db.insert(referrals).values({
-      referrerId: referrer.id,
-      referrerEmail: referrer.email,
+      referrerId: owner.id,
+      referrerEmail: owner.email,
       refereeId: newUser.id,
       refereeEmail: newUser.email,
-      code: code.trim().toUpperCase(),
+      linkId: link.id,
+      code: link.code,
       status: "pending",
     });
   } catch (err) {
@@ -154,11 +302,18 @@ export async function shouldDiscount(userId: string): Promise<boolean> {
   return row?.status === "pending";
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Paying out
+// ═══════════════════════════════════════════════════════════════════════════════
+
 /**
  * Pay the referrer, if this user was referred and has just paid for the first time.
  *
  * Called from the Stripe webhook on a successful payment. Safe to call repeatedly: the
  * referral only moves out of `pending` once, so a redelivered webhook cannot pay twice.
+ *
+ * No cap check here. The slot was spent when the link was generated; refusing to pay now
+ * would mean charging somebody a slot and then keeping the reward.
  */
 export async function rewardForFirstPayment(refereeId: string): Promise<void> {
   const [referral] = await db
@@ -176,41 +331,6 @@ export async function rewardForFirstPayment(refereeId: string): Promise<void> {
     .limit(1);
 
   if (!referrer) return;
-
-  // The cap is counted from the LEDGER, not from a column on the user, so it is a fact about
-  // what was actually paid rather than a counter that could drift.
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-
-  const [{ n }] = await db
-    .select({ n: count() })
-    .from(referrals)
-    .where(
-      and(
-        eq(referrals.referrerId, referrer.id),
-        eq(referrals.status, "rewarded"),
-        gte(referrals.rewardedAt, monthStart)
-      )
-    );
-
-  if (n >= MONTHLY_REWARD_CAP) {
-    await db
-      .update(referrals)
-      .set({ status: "capped", rewardedAt: new Date() })
-      .where(eq(referrals.id, referral.id));
-
-    await logEvent({
-      type: "admin_action",
-      actor: "webhook",
-      userId: referrer.id,
-      email: referrer.email,
-      message: `${referrer.email} referred ${referral.refereeEmail} but is at this month's cap`,
-      detail: { referralId: referral.id, cap: MONTHLY_REWARD_CAP },
-    });
-
-    return;
-  }
 
   if (!referrer.stripeCustomerId) {
     // Nothing to credit against yet. Left pending so it pays out if they ever subscribe.
@@ -254,46 +374,88 @@ export async function rewardForFirstPayment(refereeId: string): Promise<void> {
   }
 }
 
-export type ReferralSummary = {
+// ═══════════════════════════════════════════════════════════════════════════════
+// Reading
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** What the page shows for one invite. */
+export type InviteView = {
+  id: string;
   code: string;
-  /** Signed up, not yet paid. */
+  /** unused | used | revoked | expired — already resolved against the clock. */
+  state: "unused" | "used" | "revoked" | "expired";
+  createdAt: Date;
+  expiresAt: Date;
+  usedByEmail: string | null;
+  usedAt: Date | null;
+  /** Set once the person who used it has paid and the credit has landed. */
+  rewardAmount: number | null;
+  rewardCurrency: string | null;
+  rewardedAt: Date | null;
+};
+
+export type ReferralSummary = {
+  invites: InviteView[];
+  slotsLeft: number;
+  cap: number;
+  /** Live invites nobody has used yet. */
+  outstanding: number;
+  /** Used, but the person hasn't paid yet. */
   pending: number;
   rewarded: number;
-  capped: number;
   /** Total credited, in minor units. */
   earned: number;
   currency: string;
-  /** How many more will pay out this calendar month. */
-  remainingThisMonth: number;
-  recent: Referral[];
 };
 
 export async function getSummary(user: Pick<User, "id">): Promise<ReferralSummary> {
-  const code = await getOrCreateCode(user.id);
-
+  // One join rather than a query per invite: the ledger row is what turns "used" into
+  // "credited", and the page wants both on the same line.
   const rows = await db
-    .select()
-    .from(referrals)
-    .where(eq(referrals.referrerId, user.id))
-    .orderBy(desc(referrals.createdAt))
+    .select({ link: referralLinks, referral: referrals })
+    .from(referralLinks)
+    .leftJoin(referrals, eq(referrals.linkId, referralLinks.id))
+    .where(eq(referralLinks.ownerId, user.id))
+    .orderBy(desc(referralLinks.createdAt))
     .limit(50);
 
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
+  const now = new Date();
 
-  const rewardedThisMonth = rows.filter(
-    (r) => r.status === "rewarded" && r.rewardedAt && r.rewardedAt >= monthStart
-  ).length;
+  const invites: InviteView[] = rows.map(({ link, referral }) => ({
+    id: link.id,
+    code: link.code,
+    // Resolved here so nothing downstream has to know that an "unused" row with a past date
+    // is really expired.
+    state:
+      link.status === "unused" && link.expiresAt <= now
+        ? "expired"
+        : (link.status as InviteView["state"]),
+    createdAt: link.createdAt,
+    expiresAt: link.expiresAt,
+    usedByEmail: link.usedByEmail,
+    usedAt: link.usedAt,
+    rewardAmount: referral?.rewardAmount ?? null,
+    rewardCurrency: referral?.rewardCurrency ?? null,
+    rewardedAt: referral?.rewardedAt ?? null,
+  }));
+
+  // Earnings come from the ledger, not from the invites above, so credit from a link that
+  // has since been deleted still shows up in the total.
+  const ledger = await db
+    .select()
+    .from(referrals)
+    .where(eq(referrals.referrerId, user.id));
 
   return {
-    code,
-    pending: rows.filter((r) => r.status === "pending").length,
-    rewarded: rows.filter((r) => r.status === "rewarded").length,
-    capped: rows.filter((r) => r.status === "capped").length,
-    earned: rows.reduce((total, r) => total + (r.rewardAmount ?? 0), 0),
+    invites,
+    slotsLeft: await slotsLeft(user.id),
+    cap: MONTHLY_LINK_CAP,
+    outstanding: invites.filter((i) => i.state === "unused").length,
+    pending: ledger.filter((r) => r.status === "pending").length,
+    rewarded: ledger.filter((r) => r.status === "rewarded").length,
+    earned: ledger.reduce((total, r) => total + (r.rewardAmount ?? 0), 0),
     currency: REFERRAL_CURRENCY,
-    remainingThisMonth: Math.max(0, MONTHLY_REWARD_CAP - rewardedThisMonth),
-    recent: rows.slice(0, 10),
   };
 }
+
+export type { Referral };

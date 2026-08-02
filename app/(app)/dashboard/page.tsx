@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Gift } from "lucide-react";
+import { ArrowRight, Gift } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { ServerCard } from "@/components/app/server-card";
 import { Announcements } from "@/components/app/announcements";
@@ -10,6 +10,8 @@ import { listForUser } from "@/lib/announcements";
 import { getCurrentUser } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth";
 import { emailVerificationRequired } from "@/lib/email";
+import { formatMoney } from "@/lib/stripe/client";
+import { REFERRAL_REWARD } from "@/lib/referrals";
 
 export const metadata: Metadata = { title: "Overview" };
 
@@ -46,11 +48,18 @@ export default async function DashboardPage() {
 
         <ServerCard user={user} />
 
-        <div className="flex items-center gap-3 rounded-xl border border-dashed bg-card/50 px-5 py-4 text-sm text-muted-foreground">
-          <Gift className="size-4 shrink-0" />
-          <span>
-            Referrals are coming: invite a friend, get credit on your next bill.
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border bg-card px-5 py-4">
+          <Gift className="size-4 shrink-0 text-success" />
+          <span className="text-sm">
+            Invite a friend, get {formatMoney(REFERRAL_REWARD)} off your next bill.
           </span>
+          <Link
+            href="/dashboard/referrals"
+            className="ml-auto inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            How it works
+            <ArrowRight className="size-3.5" />
+          </Link>
         </div>
 
         {emailVerificationRequired() && !user.emailVerifiedAt && (
