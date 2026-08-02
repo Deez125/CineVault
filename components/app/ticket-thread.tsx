@@ -2,7 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, LoaderCircle, MessageSquare, RotateCcw, Send, ShieldCheck } from "lucide-react";
+import {
+  ArrowUp,
+  CircleCheck,
+  LoaderCircle,
+  MessageSquare,
+  RotateCcw,
+  ShieldCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { categoryLabel, priorityLabel, priorityTone } from "@/lib/ticket-types";
@@ -54,6 +61,7 @@ export function TicketThread({
   const [busyStatus, setBusyStatus] = useState(false);
 
   const bottom = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   // Read inside the poll without being a dependency of it, which would tear down and rebuild
   // the timer on every single message.
   const lastId = useRef(initialMessages.at(-1)?.id ?? 0);
@@ -137,6 +145,12 @@ export function TicketThread({
       if (!res.ok) throw new Error(data.error ?? "Couldn't send that.");
 
       setBody("");
+      // Clearing the value does not shrink a textarea that was manually grown, so it has to
+      // be put back by hand or the box stays tall after every long reply.
+      if (input.current) {
+        input.current.style.height = "auto";
+        input.current.focus();
+      }
       merge([data.message]);
       router.refresh();
     } catch (err) {
@@ -177,7 +191,10 @@ export function TicketThread({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
       {/* ── The conversation ──────────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
+      {/* min-w-0 is load-bearing: a flex child defaults to min-width:auto, so this column
+          refuses to shrink below its content and pushes the Send button underneath the
+          details sidebar instead of wrapping. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-5">
           {messages.map((message, i) => (
             <div key={message.id}>
@@ -223,36 +240,46 @@ export function TicketThread({
               </Button>
             </div>
           ) : (
+            /* One line tall, growing only as they write. A tall empty box implies a long
+               answer is expected, and most replies are a sentence. */
             <form
               onSubmit={send}
-              className="rounded-xl border bg-background transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+              className="flex items-end gap-2 rounded-xl border bg-background px-3 py-2 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
             >
               <textarea
+                ref={input}
                 value={body}
-                onChange={(e) => setBody(e.target.value)}
+                onChange={(e) => {
+                  setBody(e.target.value);
+                  grow(e.currentTarget);
+                }}
                 onKeyDown={(e) => {
-                  // Enter sends, shift+enter breaks the line. Matches every chat anybody has
-                  // used, and a support reply is a chat message, not an essay.
+                  // Enter sends, shift+enter breaks the line. Not labelled: every chat works
+                  // this way and nobody needs telling.
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     void send();
                   }
                 }}
-                rows={2}
+                rows={1}
                 maxLength={5000}
                 placeholder="Write a reply"
-                className="w-full resize-none bg-transparent px-3.5 py-3 text-sm outline-none"
+                className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none"
               />
 
-              <div className="flex items-center justify-between gap-3 px-3 pb-2.5">
-                <span className="text-[11px] text-muted-foreground">
-                  Enter to send · Shift+Enter for a new line
-                </span>
-                <Button type="submit" size="sm" disabled={sending || !body.trim()}>
-                  {sending ? <LoaderCircle className="animate-spin" /> : <Send />}
-                  Send
-                </Button>
-              </div>
+              {/* A round icon button. At one line tall the box is a chat input, and a
+                  labelled rectangle in it reads as a form control rather than "send this". */}
+              {/* size-8 exactly matches the one-line textarea's height, so a bigger button
+                  does not make the box taller — the textarea still governs the row. */}
+              <Button
+                type="submit"
+                size="icon"
+                aria-label="Send"
+                className="shrink-0 rounded-full"
+                disabled={sending || !body.trim()}
+              >
+                {sending ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}
+              </Button>
             </form>
           )}
         </div>
@@ -377,6 +404,18 @@ function Bubble({ message, mine }: { message: ThreadMessage; mine: boolean }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Grow the reply box to fit what's in it, up to a limit.
+ *
+ * Height has to be reset to auto FIRST: scrollHeight can only report content taller than the
+ * current height, so measuring without resetting means the box grows and never shrinks again
+ * when text is deleted.
+ */
+function grow(element: HTMLTextAreaElement): void {
+  element.style.height = "auto";
+  element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
 }
 
 /** True when this message is on a different day from the one before it. */
