@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
+import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
 import {
   changePasswordAction,
   deleteAccountAction,
@@ -98,7 +98,7 @@ export function SettingsClient({
               defaultValue={username ?? ""}
               maxLength={USERNAME_MAX}
               autoComplete="username"
-              placeholder="jomat"
+              placeholder="yourname"
             />
             <p className="text-xs text-muted-foreground">
               {USERNAME_MIN} to {USERNAME_MAX} characters: letters, numbers, underscores and

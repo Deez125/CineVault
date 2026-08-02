@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 
@@ -44,12 +45,38 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  render,
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  /**
+   * Work out whether this really renders a <button>.
+   *
+   * Base UI assumes it does, and warns loudly when it does not — which is every one of our
+   * `render={<Link/>}` and `render={<a/>}` buttons. Setting nativeButton={false} at each call
+   * site would work until somebody adds the next one and forgets, so it is inferred here:
+   *
+   *   no render          -> a real <button>
+   *   render={<button/>} -> a real <button>
+   *   anything else      -> not a button, so drop the native semantics claim
+   *
+   * An explicit nativeButton always wins. A function render is unknowable, so it keeps the
+   * primitive's own default rather than being guessed at.
+   */
+  const isNative =
+    nativeButton ??
+    (render == null
+      ? true
+      : React.isValidElement(render)
+        ? render.type === "button"
+        : undefined)
+
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={isNative}
       {...props}
     />
   )

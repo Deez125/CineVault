@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { AuthForm } from "@/components/auth/auth-form";
 import { signupAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
-import { MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
+import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
 
 export const metadata: Metadata = { title: "Create an account" };
 

@@ -28,7 +28,9 @@ const PARAMS = { N: 16384, r: 8, p: 1 } as const;
 const KEY_LENGTH = 64;
 const SALT_LENGTH = 16;
 
-export const MIN_PASSWORD_LENGTH = 10;
+// Defined in a browser-safe module because client forms need it; re-exported here so
+// server code has one place to import auth things from.
+export { MIN_PASSWORD_LENGTH } from "./constants";
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(SALT_LENGTH);
