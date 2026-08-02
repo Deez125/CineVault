@@ -32,15 +32,15 @@ export default async function BillingPage({
   // other implies they're set up. So: say what's actually happening and watch for it.
   if (!subscription && params.checkout) {
     return (
-      <div className="mx-auto max-w-3xl">
+      <>
         <PageHeader icon={CreditCard} title="Billing" subtitle="Finishing your payment" />
         <FinishingCheckout subscriptionId={params.checkout} />
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <>
       <PageHeader
         icon={CreditCard}
         title="Billing"
@@ -52,6 +52,6 @@ export default async function BillingPage({
       ) : (
         <PlanChooser tiers={tiers} preselect={params.price} />
       )}
-    </div>
+    </>
   );
 }

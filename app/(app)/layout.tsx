@@ -23,7 +23,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <SidebarTrigger />
         </header>
 
-        <div className="flex-1 p-4 md:p-6">{children}</div>
+        {/* The page container, and the ONLY place a dashboard page's width is decided.
+            Pages render their content directly and must not wrap it in their own
+            `mx-auto max-w-*`: every one that did left a column of dead space down both
+            sides of a wide screen, and four separate opinions about how wide a page should
+            be is four places to change when the answer changes. */}
+        <div className="w-full flex-1 p-4 md:p-6">{children}</div>
       </SidebarInset>
 
       {/* Decided on the SERVER. Rendering it conditionally keeps it out of the bundle for

@@ -14,7 +14,7 @@ export default async function SettingsPage() {
   if (!user) return null;
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <>
       <PageHeader icon={Settings} title="Settings" subtitle="Your account" />
 
       <SettingsClient
@@ -27,6 +27,6 @@ export default async function SettingsPage() {
         emailVerified={Boolean(user.emailVerifiedAt)}
         isMember={user.isMember}
       />
-    </div>
+    </>
   );
 }

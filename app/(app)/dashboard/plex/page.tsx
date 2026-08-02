@@ -31,7 +31,7 @@ export default async function PlexPage({
     : null;
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <>
       <PageHeader
         icon={Play}
         title="Plex"
@@ -66,6 +66,6 @@ export default async function PlexPage({
           isMember: user.isMember,
         }}
       />
-    </div>
+    </>
   );
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { sessions, users, type User } from "@/lib/db/schema";
 import { adminEmails, isProduction } from "@/lib/env";
@@ -169,15 +169,6 @@ export async function destroySession(): Promise<void> {
  */
 export async function destroyAllSessions(userId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.userId, userId));
-}
-
-/** Housekeeping, run by the worker. Expired rows are dead weight and a small privacy leak. */
-export async function pruneExpiredSessions(): Promise<number> {
-  const deleted = await db
-    .delete(sessions)
-    .where(lt(sessions.expiresAt, new Date()))
-    .returning({ id: sessions.id });
-  return deleted.length;
 }
 
 /** Used by the "signed in devices" list on the settings page. */

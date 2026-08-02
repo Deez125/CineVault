@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleCheck, ExternalLink, Link2, LoaderCircle, TriangleAlert, Unlink } from "lucide-react";
+import { CircleCheck, ExternalLink, LoaderCircle, TriangleAlert, Unlink } from "lucide-react";
+// The one place react-icons is used. Lucide is the icon set everywhere else; this is a brand
+// mark, and Plex's chevron is not something a generic set has.
+import { FaAngleRight } from "react-icons/fa";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -97,7 +100,13 @@ export function PlexClient({ state }: { state: PlexState }) {
               onClick={() => setGoing(true)}
               render={<a href="/api/plex/start" />}
             >
-              {going ? <LoaderCircle className="animate-spin" /> : <Link2 />}
+              {going ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                // Plex's own yellow, from the colour index. Brand marks do not change with
+                // the theme, which is why --plex is the same value in light and dark.
+                <FaAngleRight className="text-[var(--plex)]" />
+              )}
               Sign in with Plex
             </Button>
 

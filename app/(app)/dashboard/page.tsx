@@ -21,7 +21,7 @@ export default async function DashboardPage() {
   const notices = await activeAnnouncements();
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <>
       <PageHeader
         icon={LayoutGrid}
         title="Overview"
@@ -70,7 +70,7 @@ export default async function DashboardPage() {
           </p>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
