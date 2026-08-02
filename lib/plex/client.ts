@@ -1,30 +1,35 @@
-import { env } from "@/lib/env";
+import { XMLParser } from "fast-xml-parser";
+import { env, plexSectionIds } from "@/lib/env";
 
 /**
- * Low-level plex.tv HTTP.
+ * plex.tv HTTP.
  *
- * NOTE: written from the documented API and the previous build's hard-won notes, but NOT yet
- * exercised against a real server — the Plex credentials were not available when this was
- * written. Treat the first live run as the real test.
+ * Two things about this API that cost real time to discover, both verified against the live
+ * server rather than taken from documentation:
  *
- * Things that are already known to bite here, carried forward so they are not relearned:
+ *   - **The sharing endpoints speak XML, not JSON.** `/api/servers/{id}/shared_servers`
+ *     returns `application/xml` no matter what you put in the Accept header. Only the
+ *     `/api/v2/*` identity endpoints return JSON, and `/api/v2/shared_servers` answers 405 to
+ *     a GET — it exists only to create shares.
  *
- *   - Plex has NO invite links. Every share needs a real Plex identity up front, which is why
- *     linking uses the device-PIN flow to learn who someone is before we can share anything.
- *
- *   - Library KEYS are not plex.tv SECTION IDS. A server reports `<Section id="143184126"
- *     key="11">`; the share API wants the `id`, while the server's own /library/sections
- *     reports the `key`. Passing a key gets you "404 Not found", worded as though the SERVER
- *     did not exist, which sends you debugging entirely the wrong thing.
- *
- *   - HTTP 422 is overloaded. It means both "already shared" (benign, ignore it) and "you
- *     have hit the ~100 user share cap" (an emergency: every new member fails from here on).
- *     Read the body. Never trust the code alone.
+ *   - **Library KEYS are not plex.tv SECTION IDS.** A server reports
+ *     `<Section id="143184126" key="11" title="Anime Movies"/>`. The share API wants the
+ *     nine-digit `id`; almost everything else, including the env var inherited from the
+ *     previous build, talks in the small `key`. Passing a key produces "404 Not found",
+ *     worded as though the SERVER did not exist, which sends you debugging the wrong thing
+ *     entirely. `resolveSectionIds()` below translates, and accepts either form.
  */
 
 const PLEX_TV = "https://plex.tv";
 
-/** Identifies this app to Plex. Shown to users on their authorised-devices page. */
+const xml = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  // Plex returns one element unwrapped and several as an array. Without this, code that
+  // works with two shared users crashes with one.
+  isArray: (name) => ["SharedServer", "Section", "Server"].includes(name),
+});
+
 export function plexHeaders(token?: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -49,11 +54,12 @@ export class PlexError extends Error {
   }
 
   /**
-   * True when a 422 is Plex saying the server has hit its share cap.
+   * True when a 422 means the server has hit its share cap.
    *
-   * This is the one that matters operationally: once the cap is hit, EVERY new member fails
-   * to be provisioned, quietly, one at a time. It needs to be distinguishable from the
-   * harmless "already shared" 422 so it can be surfaced instead of swallowed.
+   * This is the one that matters operationally: past the cap, EVERY new member silently
+   * fails to be provisioned, one at a time, and it looks like an unrelated bug each time. It
+   * has to be distinguishable from the harmless "already shared" 422, which is why the body
+   * is read rather than the status trusted.
    */
   get isShareCapReached(): boolean {
     if (this.status !== 422) return false;
@@ -66,14 +72,13 @@ export class PlexError extends Error {
     );
   }
 
-  /** True when a 422 just means the share already exists, which is a success for our purposes. */
+  /** True when a 422 just means the share already exists, which is our goal anyway. */
   get isAlreadyShared(): boolean {
-    if (this.status !== 422) return false;
-    return !this.isShareCapReached;
+    return this.status === 422 && !this.isShareCapReached;
   }
 }
 
-export async function plexFetch(
+async function plexFetch(
   path: string,
   init: RequestInit & { token?: string | null } = {}
 ): Promise<Response> {
@@ -81,7 +86,7 @@ export async function plexFetch(
 
   const res = await fetch(`${PLEX_TV}${path}`, {
     ...rest,
-    headers: { ...plexHeaders(token ?? env.PLEX_TOKEN), ...(rest.headers ?? {}) },
+    headers: { ...plexHeaders(token === undefined ? env.PLEX_TOKEN : token), ...(rest.headers ?? {}) },
     cache: "no-store",
   });
 
@@ -97,8 +102,12 @@ export async function plexJson<T>(
   path: string,
   init: RequestInit & { token?: string | null } = {}
 ): Promise<T> {
-  const res = await plexFetch(path, init);
-  return (await res.json()) as T;
+  return (await plexFetch(path, init)).json() as Promise<T>;
+}
+
+async function plexXml<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const text = await (await plexFetch(path, init)).text();
+  return xml.parse(text) as T;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -110,9 +119,8 @@ export type PlexPin = { id: number; code: string };
 /**
  * Start a link. Returns a 4-character code the user types at plex.tv/link.
  *
- * Do NOT add `?strong=true`. It returns a 25-character code, and plex.tv/link will not accept
- * one — the page only takes the short form. That mistake produces a code that looks fine and
- * is simply impossible to use.
+ * Do NOT add `?strong=true`. It returns a 25-character code, and plex.tv/link only accepts
+ * the short form — producing a code that looks perfectly fine and simply cannot be used.
  */
 export async function createPin(): Promise<PlexPin> {
   const pin = await plexJson<{ id: number; code: string }>("/api/v2/pins", {
@@ -125,19 +133,15 @@ export async function createPin(): Promise<PlexPin> {
   return { id: pin.id, code: pin.code };
 }
 
-export type PlexIdentity = {
-  id: string;
-  username: string;
-  email: string | null;
-};
+export type PlexIdentity = { id: string; username: string; email: string | null };
 
 /**
- * Check whether a PIN has been authorised.
+ * Has the PIN been authorised yet?
  *
- * Returns null while the user hasn't finished. Once they have, Plex hands over THEIR token —
- * which we use exactly once, to ask who they are, and then discard. We never store a member's
- * Plex token: we have no use for it, and storing it would make this database far more
- * dangerous to lose than it needs to be.
+ * Returns null while the user hasn't finished. Once they have, Plex hands over THEIR token,
+ * which we use exactly once to ask who they are and then discard. A member's Plex token is
+ * never stored: we have no use for it, and keeping it would make this database far more
+ * dangerous to lose.
  */
 export async function checkPin(pinId: number): Promise<PlexIdentity | null> {
   const pin = await plexJson<{ authToken: string | null }>(`/api/v2/pins/${pinId}`, {
@@ -151,60 +155,110 @@ export async function checkPin(pinId: number): Promise<PlexIdentity | null> {
     { token: pin.authToken }
   );
 
-  return {
-    id: String(user.id),
-    username: user.username,
-    email: user.email ?? null,
-  };
+  return { id: String(user.id), username: user.username, email: user.email ?? null };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Library sections
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type PlexSection = { id: string; key: string; title: string; type: string };
+
+let sectionCache: { at: number; sections: PlexSection[] } | null = null;
+const SECTION_TTL_MS = 10 * 60_000;
+
+/** Every library on the server, with both its plex.tv id and its server-side key. */
+export async function listSections(): Promise<PlexSection[]> {
+  if (sectionCache && Date.now() - sectionCache.at < SECTION_TTL_MS) return sectionCache.sections;
+
+  const parsed = await plexXml<{
+    MediaContainer?: { Server?: Array<{ Section?: PlexSection[] }> };
+  }>(`/api/servers/${env.PLEX_MACHINE_ID}`);
+
+  const sections = (parsed.MediaContainer?.Server?.[0]?.Section ?? []).map((s) => ({
+    id: String(s.id),
+    key: String(s.key),
+    title: String(s.title ?? ""),
+    type: String(s.type ?? ""),
+  }));
+
+  sectionCache = { at: Date.now(), sections };
+  return sections;
+}
+
+/**
+ * The plex.tv section ids to share, translated from whatever PLEX_LIBRARY_SECTION_IDS holds.
+ *
+ * Accepts library keys OR section ids, because the value inherited from the previous
+ * deployment is keys despite the variable's name, and silently sharing the wrong libraries
+ * would be worse than either.
+ *
+ * Throws if anything can't be resolved. A share built from a partial list would grant a
+ * paying member access to some of what they bought, and look like a success.
+ */
+export async function resolveSectionIds(): Promise<string[]> {
+  const configured = plexSectionIds();
+  if (configured.length === 0) {
+    throw new Error("PLEX_LIBRARY_SECTION_IDS is empty; a share with no libraries is not a share");
+  }
+
+  const sections = await listSections();
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  const byKey = new Map(sections.map((s) => [s.key, s]));
+
+  const resolved: string[] = [];
+  const missing: string[] = [];
+
+  for (const value of configured) {
+    const match = byId.get(value) ?? byKey.get(value);
+    if (match) resolved.push(match.id);
+    else missing.push(value);
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `PLEX_LIBRARY_SECTION_IDS refers to libraries that do not exist on this server: ` +
+        `${missing.join(", ")}. Known libraries: ` +
+        sections.map((s) => `${s.title} (key ${s.key}, id ${s.id})`).join("; ")
+    );
+  }
+
+  return resolved;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Sharing
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type SharedServer = {
-  id: number;
-  username: string | null;
-  email: string | null;
-};
+export type SharedServer = { id: number; username: string | null; email: string | null };
 
 /** Everyone the server is currently shared with. */
 export async function listShares(): Promise<SharedServer[]> {
-  const machineId = env.PLEX_MACHINE_ID;
-  const raw = await plexJson<unknown>(`/api/servers/${machineId}/shared_servers`);
-
-  // Plex's shape here varies by endpoint version, so normalise defensively rather than
-  // trusting one layout and getting an empty list (which would read as "nobody is shared
-  // with" and trigger a re-invite for everybody).
-  const container =
-    (raw as { MediaContainer?: { SharedServer?: unknown[] } }).MediaContainer ?? raw;
-  const list =
-    (container as { SharedServer?: unknown[] }).SharedServer ??
-    (container as { sharedServers?: unknown[] }).sharedServers ??
-    [];
-
-  return (Array.isArray(list) ? list : []).map((entry) => {
-    const e = entry as Record<string, unknown>;
-    return {
-      id: Number(e.id),
-      username: (e.username as string) ?? null,
-      email: (e.email as string) ?? (e.invitedEmail as string) ?? null,
+  const parsed = await plexXml<{
+    MediaContainer?: {
+      SharedServer?: Array<{ id: string; username?: string; email?: string }>;
     };
-  });
+  }>(`/api/servers/${env.PLEX_MACHINE_ID}/shared_servers`);
+
+  return (parsed.MediaContainer?.SharedServer ?? []).map((s) => ({
+    id: Number(s.id),
+    username: s.username ?? null,
+    email: s.email ?? null,
+  }));
 }
 
 /**
- * Share the configured library sections with a Plex account.
+ * Share the configured libraries with a Plex account.
  *
- * "Already shared" is treated as SUCCESS. This function's job is to make the share exist, and
- * it already does — failing here would make the reconciler retry forever and log an error
- * every five minutes for a member who is perfectly fine.
+ * "Already shared" counts as SUCCESS. This function's job is to make the share exist and it
+ * already does; failing would make the reconciler retry forever and log an error every five
+ * minutes about a member who is perfectly fine.
  */
-export async function share(invitedEmailOrUsername: string, sectionIds: string[]): Promise<void> {
-  const machineId = env.PLEX_MACHINE_ID;
+export async function share(invitedEmailOrUsername: string): Promise<void> {
+  const sectionIds = await resolveSectionIds();
 
   try {
-    await plexFetch(`/api/servers/${machineId}/shared_servers`, {
+    await plexFetch(`/api/servers/${env.PLEX_MACHINE_ID}/shared_servers`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -219,8 +273,8 @@ export async function share(invitedEmailOrUsername: string, sectionIds: string[]
 
     if (err instanceof PlexError && err.isShareCapReached) {
       throw new PlexShareCapError(
-        `Plex refused the share: the server has reached its user cap. ` +
-          `Every new member will fail to be provisioned until somebody is removed. Body: ${err.body}`
+        "Plex refused the share: the server has reached its user cap. Every new member will " +
+          `fail to be provisioned until somebody is removed. Body: ${err.body}`
       );
     }
 
@@ -228,9 +282,8 @@ export async function share(invitedEmailOrUsername: string, sectionIds: string[]
   }
 }
 
-/** Stop sharing with a Plex account. A share that doesn't exist is already the goal. */
+/** Stop sharing. A share that doesn't exist is already the goal, so that is not an error. */
 export async function unshare(usernameOrEmail: string): Promise<void> {
-  const machineId = env.PLEX_MACHINE_ID;
   const needle = usernameOrEmail.trim().toLowerCase();
 
   const shares = await listShares();
@@ -240,13 +293,14 @@ export async function unshare(usernameOrEmail: string): Promise<void> {
 
   if (!match) return;
 
-  await plexFetch(`/api/servers/${machineId}/shared_servers/${match.id}`, { method: "DELETE" });
+  await plexFetch(`/api/servers/${env.PLEX_MACHINE_ID}/shared_servers/${match.id}`, {
+    method: "DELETE",
+  });
 }
 
 /**
- * Thrown when Plex reports its share cap. Deliberately its own type: this is not a
- * per-member failure to be logged and retried, it is a service-wide outage of new signups
- * and needs to be visible.
+ * Deliberately its own type: the share cap is not a per-member failure to log and retry, it
+ * is a service-wide outage of new signups, and it needs to be visible as one.
  */
 export class PlexShareCapError extends Error {
   readonly code = "PLEX_SHARE_CAP";

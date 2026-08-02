@@ -1,5 +1,5 @@
 import type { User } from "@/lib/db/schema";
-import { plexConfigured, plexSectionIds } from "@/lib/env";
+import { plexConfigured } from "@/lib/env";
 import { assertNotProtected } from "./protected";
 import { share, unshare } from "./client";
 
@@ -20,14 +20,11 @@ export async function grantPlexAccess(user: User): Promise<void> {
     throw new Error(`${user.email} has no linked Plex account to share with`);
   }
 
-  const sections = plexSectionIds();
-  if (sections.length === 0) {
-    // Sharing zero sections technically succeeds and grants access to nothing, which looks
-    // to the member like a broken invite and to us like a successful provision.
-    throw new Error("PLEX_LIBRARY_SECTION_IDS is empty; a share with no libraries is not a share");
-  }
-
-  await share(identity, sections);
+  // Which libraries to share, and their translation from key to plex.tv section id, is
+  // resolved inside share(). It throws rather than sharing a partial list: a share built
+  // from libraries that half-resolved would look like a success and give a paying member
+  // some of what they bought.
+  await share(identity);
 }
 
 export async function revokePlexAccess(user: User): Promise<void> {
