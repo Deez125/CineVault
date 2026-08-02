@@ -114,9 +114,14 @@
 
   /* ── Brand marks ──────────────────────────────────────────────────────────
      Colours owned by someone else. They do NOT change between light and dark,
-     because Plex's yellow is Plex's yellow. Only ever used for their own logo
-     or a label that names them.                                               */
+     because Plex's yellow is Plex's yellow. Only ever used for their own logo,
+     a button that signs into them, or a label that names them.
+
+     --plex-foreground is what sits ON that yellow. It has to be dark: white
+     text on #ebaf00 fails contrast badly, and this is a button people need to
+     find.                                                                     */
   --plex: #ebaf00;
+  --plex-foreground: #1a1200;
 
   /* ── Charts ───────────────────────────────────────────────────────────────
      Admin dashboard graphs. Ordered so adjacent series stay distinguishable.   */
@@ -190,6 +195,7 @@
   --info-foreground: #ffffff;
 
   --plex: #ebaf00;
+  --plex-foreground: #1a1200;
 
   --chart-1: #3b82f6;
   --chart-2: #22c55e;
@@ -245,6 +251,7 @@
   --color-info-foreground: var(--info-foreground);
 
   --color-plex: var(--plex);
+  --color-plex-foreground: var(--plex-foreground);
 
   --color-border: var(--border);
   --color-input: var(--input);

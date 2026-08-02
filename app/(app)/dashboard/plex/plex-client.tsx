@@ -93,20 +93,17 @@ export function PlexClient({ state }: { state: PlexState }) {
 
             {/* A plain link, not a fetch. The whole point is to navigate to Plex and be
                 forwarded back, so this must be a real navigation the browser owns. */}
+            {/* Plex's own yellow, from the colour index, so it reads as "this takes you to
+                Plex" rather than as another primary action. The icon and label inherit
+                --plex-foreground, which is dark because white on #ebaf00 is unreadable. */}
             <Button
               size="lg"
-              className="mt-5 w-full sm:w-auto"
+              className="mt-5 w-full bg-plex text-plex-foreground hover:bg-plex/90 sm:w-auto"
               disabled={going}
               onClick={() => setGoing(true)}
               render={<a href="/api/plex/start" />}
             >
-              {going ? (
-                <LoaderCircle className="animate-spin" />
-              ) : (
-                // Plex's own yellow, from the colour index. Brand marks do not change with
-                // the theme, which is why --plex is the same value in light and dark.
-                <FaAngleRight className="text-[var(--plex)]" />
-              )}
+              {going ? <LoaderCircle className="animate-spin" /> : <FaAngleRight />}
               Sign in with Plex
             </Button>
 
