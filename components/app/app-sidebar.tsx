@@ -8,14 +8,14 @@ import {
   CreditCard,
   Gift,
   LayoutGrid,
-  ListVideo,
+
   Megaphone,
   MessageSquare,
   Play,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
+
   Users,
 } from "lucide-react";
 import {
@@ -60,8 +60,6 @@ const ACCOUNT_NAV: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutGrid },
   { href: "/dashboard/plex", label: "Plex", icon: Play },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
-  { href: "/dashboard/recently-added", label: "Recently added", icon: Sparkles, soon: true },
-  { href: "/dashboard/requests", label: "Requests", icon: ListVideo, soon: true },
   { href: "/dashboard/support", label: "Support", icon: MessageSquare },
   { href: "/dashboard/referrals", label: "Referrals", icon: Gift, soon: true },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
@@ -71,7 +69,6 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin", label: "Overview", icon: ShieldCheck },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/support", label: "Support inbox", icon: MessageSquare },
-  { href: "/admin/requests", label: "Requests", icon: ListVideo, soon: true },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone },
   { href: "/admin/activity", label: "Activity log", icon: Activity },
   { href: "/admin/settings", label: "Service settings", icon: SlidersHorizontal },

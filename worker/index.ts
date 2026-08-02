@@ -3,6 +3,7 @@ import "../lib/load-env";
 import { env, assertProductionIntegrations, plexConfigured } from "../lib/env";
 import { assertEmailConfigured } from "../lib/email";
 import { reconcileAll } from "../lib/reconcile";
+import { refreshRecentlyAdded } from "../lib/plex/recently-added-cache";
 import { pruneExpiredSessions } from "../lib/maintenance";
 import { pool } from "../lib/db";
 import { logError } from "../lib/events";
@@ -25,6 +26,8 @@ import { logError } from "../lib/events";
 
 const RECONCILE_MS = env.RECONCILE_INTERVAL_MS;
 const PRUNE_MS = 60 * 60 * 1000;
+/** New films land a few times a day. Ten minutes is far more often than they arrive. */
+const RECENTLY_ADDED_MS = 10 * 60 * 1000;
 
 let running = true;
 
@@ -48,6 +51,7 @@ async function main() {
       "  CineVault worker",
       `  reconcile every ${Math.round(RECONCILE_MS / 1000)}s`,
       `  prune sessions every ${Math.round(PRUNE_MS / 60000)}m`,
+      `  recently added every ${Math.round(RECENTLY_ADDED_MS / 60000)}m`,
       `  plex: ${plexConfigured() ? "configured" : "NOT configured (shares will be skipped)"}`,
       "",
     ].join("\n")
@@ -57,8 +61,14 @@ async function main() {
   // events were most likely to have been missed.
   await safely("reconcile", runReconcile);
 
+  await safely("recently-added", runRecentlyAdded);
+
   const reconcileTimer = setInterval(() => void safely("reconcile", runReconcile), RECONCILE_MS);
   const pruneTimer = setInterval(() => void safely("prune", runPrune), PRUNE_MS);
+  const recentTimer = setInterval(
+    () => void safely("recently-added", runRecentlyAdded),
+    RECENTLY_ADDED_MS
+  );
 
   const stop = (signal: string) => {
     if (!running) return;
@@ -67,6 +77,7 @@ async function main() {
     console.log(`\n  ${signal} received, stopping`);
     clearInterval(reconcileTimer);
     clearInterval(pruneTimer);
+    clearInterval(recentTimer);
 
     // Close the pool so the process actually exits rather than hanging on an open connection
     // and being SIGKILLed by the orchestrator thirty seconds later.
@@ -88,6 +99,11 @@ async function runReconcile() {
       `  reconcile: ${result.checked} checked, ${result.changed} changed, ${result.failed} failed (${result.durationMs}ms)`
     );
   }
+}
+
+async function runRecentlyAdded() {
+  const result = await refreshRecentlyAdded();
+  if (result.items > 0) console.log(`  recently added: ${result.items} item(s) cached`);
 }
 
 async function runPrune() {

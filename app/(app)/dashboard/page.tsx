@@ -1,9 +1,11 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Gift, Sparkles } from "lucide-react";
+import { Gift } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
 import { ServerCard } from "@/components/app/server-card";
 import { Announcements } from "@/components/app/announcements";
+import { RecentlyAdded } from "@/components/app/recently-added";
+import { readRecentlyAdded } from "@/lib/plex/recently-added-cache";
 import { listForUser } from "@/lib/announcements";
 import { getCurrentUser } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth";
@@ -16,8 +18,9 @@ export default async function DashboardPage() {
   const user = await getCurrentUser();
   if (!user) return null;
 
-  // Both halves: what is showing, and what they have closed but can still get back to.
-  const notices = await listForUser(user.id);
+  // Notices: both halves, what is showing and what they have closed but can get back to.
+  // Recently added is read from the cache the worker fills, never fetched from Plex here.
+  const [notices, recent] = await Promise.all([listForUser(user.id), readRecentlyAdded()]);
 
   return (
     <>
@@ -29,19 +32,16 @@ export default async function DashboardPage() {
       <div className="space-y-5">
         <Announcements visible={notices.visible} dismissed={notices.dismissed} />
 
-        {/* Recently added lives here, as a poster strip. Deliberately a visible placeholder
-            rather than a hidden section: the space it will occupy is part of the layout, and
-            leaving it out would mean rearranging this page again later. */}
         <section>
-          <div className="mb-3 flex items-baseline justify-between">
+          <div className="mb-3 flex items-baseline justify-between gap-4">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Recently added
             </h2>
+            <span className="text-xs text-muted-foreground">
+              Across the shared libraries
+            </span>
           </div>
-          <div className="flex items-center gap-3 rounded-xl border border-dashed bg-card/50 px-5 py-8 text-sm text-muted-foreground">
-            <Sparkles className="size-4 shrink-0" />
-            New films and episodes will appear here once the library feed is connected.
-          </div>
+          <RecentlyAdded items={recent} />
         </section>
 
         <ServerCard user={user} />
