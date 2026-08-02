@@ -5,7 +5,7 @@ import { users } from "@/lib/db/schema";
 import { env } from "@/lib/env";
 import { stripe } from "@/lib/stripe/client";
 import { applyEntitlement } from "@/lib/entitlements";
-import { rewardForFirstPayment } from "@/lib/referrals";
+import { restoreReward, reverseReward, rewardForFirstPayment } from "@/lib/referrals";
 import { logError, logEvent } from "@/lib/events";
 
 /**
@@ -31,6 +31,12 @@ const HANDLED = new Set([
   "customer.subscription.deleted",
   "invoice.payment_succeeded",
   "invoice.payment_failed",
+  // Referral clawback. Nothing about ACCESS depends on these — a refund does not cancel a
+  // subscription, and a dispute is handled by Stripe's own rules — but a referral credit paid
+  // out on money that went back is a leak, and these are the only notice we get.
+  "charge.refunded",
+  "charge.dispute.created",
+  "charge.dispute.closed",
 ]);
 
 export async function POST(request: Request) {
@@ -139,7 +145,10 @@ async function handle(event: Stripe.Event): Promise<void> {
         // Gated on `amount_paid > 0` so a $0 invoice — a full-coverage credit, a trial — does
         // not trigger a payout; and the ledger's own pending check makes a redelivered webhook
         // a no-op rather than a second $10.
-        await rewardForFirstPayment(user.id);
+        //
+        // The invoice id goes with it so the reward records which payment earned it, which is
+        // what a later refund matches on.
+        await rewardForFirstPayment(user.id, invoice.id);
       }
 
       // Re-derive entitlement either way. A successful payment can move `past_due` back to
@@ -148,7 +157,44 @@ async function handle(event: Stripe.Event): Promise<void> {
       await applyEntitlement(user.id, { actor: "webhook" });
       return;
     }
+
+    case "charge.refunded": {
+      const charge = event.data.object;
+
+      // FULL refunds only. Refunding $3 of goodwill should not cost the person who introduced
+      // them their $10 — they did pay, and they are still here.
+      if (charge.amount_refunded < charge.amount) return;
+
+      const intent = intentId(charge.payment_intent);
+      if (intent) await reverseReward(intent, "refund");
+      return;
+    }
+
+    case "charge.dispute.created": {
+      // Stripe withdraws the money the moment a dispute opens, so the credit goes with it.
+      // If the dispute is later won, `dispute.closed` below puts it back.
+      const intent = intentId(event.data.object.payment_intent);
+      if (intent) await reverseReward(intent, "dispute");
+      return;
+    }
+
+    case "charge.dispute.closed": {
+      const dispute = event.data.object;
+      if (dispute.status !== "won") return;
+
+      const intent = intentId(dispute.payment_intent);
+      if (intent) await restoreReward(intent);
+      return;
+    }
   }
+}
+
+/** Stripe hands these back as either an id or the expanded object, depending on the event. */
+function intentId(
+  intent: string | Stripe.PaymentIntent | null | undefined
+): string | null {
+  if (!intent) return null;
+  return typeof intent === "string" ? intent : intent.id;
 }
 
 /**

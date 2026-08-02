@@ -8,7 +8,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { signupAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
-import { REFEREE_PERCENT_OFF, findInviter } from "@/lib/referrals";
+import { REFEREE_PERCENT_OFF, findInviter, inspectCode } from "@/lib/referrals";
 import { displayName } from "@/lib/display-name";
 
 export const metadata: Metadata = { title: "Create an account" };
@@ -20,6 +20,14 @@ export default async function SignupPage({
 }) {
   const params = await searchParams;
   if (await getSessionUser()) redirect(params.next ?? "/dashboard");
+
+  // A dead invite gets its own page rather than being quietly ignored. Somebody who followed
+  // a link expecting half off should be told it will not happen, not shown a normal signup
+  // form and surprised by the full price at checkout.
+  if (params.ref) {
+    const state = await inspectCode(params.ref);
+    if (state !== "live") redirect(`/invite-unavailable?state=${state}`);
+  }
 
   // Looked up here purely so the page can say whose invite this is. The code itself is
   // re-checked server-side at signup; nothing trusts this render.

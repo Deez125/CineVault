@@ -496,16 +496,30 @@ export const referrals = pgTable(
     /**
      * pending  — signed up, has not paid yet
      * rewarded — referee paid, referrer credited
+     * reversed — that payment was refunded or disputed, the credit has been taken back
      *
      * There is no `capped` any more: the monthly limit is spent when the link is generated,
      * so anything that made it as far as a signup has already been paid for.
      */
     status: text("status").notNull().default("pending"),
 
-    /** Minor units actually credited. Null until it pays out. */
+    /** Minor units actually credited. Null until it pays out. Kept after a reversal. */
     rewardAmount: integer("reward_amount"),
     rewardCurrency: text("reward_currency"),
     rewardedAt: timestamp("rewarded_at", { withTimezone: true }),
+
+    /**
+     * The payment that earned the reward.
+     *
+     * Recorded so a clawback can tell "they refunded the payment we paid out on" from "they
+     * refunded month six". Only the former should cost the referrer their credit — somebody
+     * who stayed half a year was a real referral whatever happened later.
+     */
+    triggerPaymentIntentId: text("trigger_payment_intent_id"),
+
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    /** refund | dispute */
+    reversedReason: text("reversed_reason"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -515,6 +529,8 @@ export const referrals = pgTable(
     uniqueIndex("referrals_referee_key").on(t.refereeId).where(notNull("referee_id")),
     index("referrals_referrer_idx").on(t.referrerId),
     index("referrals_status_idx").on(t.status),
+    // A refund webhook arrives knowing only the payment. This is how it finds the reward.
+    index("referrals_trigger_payment_idx").on(t.triggerPaymentIntentId),
   ]
 );
 

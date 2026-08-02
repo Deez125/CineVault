@@ -55,6 +55,15 @@ export const MONTHLY_LINK_CAP = 3;
 /** How long a fresh link stays usable. */
 export const LINK_LIFETIME_DAYS = 30;
 
+/**
+ * How long a DEAD-AND-UNUSED link stays on the page before it is deleted.
+ *
+ * Only ever applies to invites nobody redeemed — expired or revoked. A used link is a record
+ * of a real referral and is kept forever, whatever its age and whatever became of the credit,
+ * because it is the answer to "who did I introduce, and was I paid for them?"
+ */
+export const DEAD_LINK_RETENTION_DAYS = 30;
+
 /** The Stripe coupon created by `npm run stripe:setup`. */
 export const REFERRAL_COUPON_ID = "cinevault-referral-first-month";
 
@@ -201,6 +210,44 @@ export async function sweepExpiredLinks(): Promise<number> {
   return expired.length;
 }
 
+/**
+ * Delete invites that died without being used.
+ *
+ * THREE separate guards, because this is the only code in the referral system that destroys
+ * anything and the thing it must never destroy is somebody's record of a real referral:
+ *
+ *   1. Status must be `expired` or `revoked`. A `used` link is never a candidate, and neither
+ *      is a live one.
+ *   2. It must have been dead for DEAD_LINK_RETENTION_DAYS, so a member who revoked something
+ *      yesterday can still see that they did.
+ *   3. No ledger row may point at it — belt and braces over guard 1. If a referral exists for
+ *      this link then somebody redeemed it, whatever the status column happens to say, and it
+ *      is not going anywhere.
+ *
+ * Nothing in `referrals` is ever deleted by anything, at any age.
+ */
+export async function purgeDeadLinks(): Promise<number> {
+  const cutoff = new Date(Date.now() - DEAD_LINK_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  const gone = await db
+    .delete(referralLinks)
+    .where(
+      and(
+        or(eq(referralLinks.status, "expired"), eq(referralLinks.status, "revoked")),
+        // Whichever ended it. COALESCE because a revoked link may still have a future
+        // expiry, and an expired one was never revoked.
+        lt(sql`coalesce(${referralLinks.revokedAt}, ${referralLinks.expiresAt})`, cutoff),
+        // The column is spelled out rather than referenced through Drizzle: an unqualified
+        // `id` inside a subquery binds to the INNER table, which would compare a link id to
+        // itself and quietly match nothing.
+        sql`not exists (select 1 from ${referrals} where ${referrals.linkId} = ${sql.raw('"referral_links"."id"')})`
+      )
+    )
+    .returning({ id: referralLinks.id });
+
+  return gone.length;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Redemption
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -218,6 +265,32 @@ export async function findLink(code: string): Promise<ReferralLink | null> {
 
   if (!link || !isLive(link)) return null;
   return link;
+}
+
+/**
+ * Why a code will not work, for the page that has to explain it.
+ *
+ * `findLink` deliberately collapses every dead reason to null, which is right for redemption
+ * and useless for telling somebody what happened. Revoked reports as `expired` on purpose:
+ * "the person who sent this deleted it" is not a distinction the recipient can act on, and
+ * saying so invites an awkward conversation with the friend who invited them.
+ */
+export type CodeState = "live" | "used" | "expired" | "unknown";
+
+export async function inspectCode(code: string): Promise<CodeState> {
+  const trimmed = code.trim();
+  if (!trimmed) return "unknown";
+
+  const [link] = await db
+    .select()
+    .from(referralLinks)
+    .where(sql`upper(${referralLinks.code}) = upper(${trimmed})`)
+    .limit(1);
+
+  if (!link) return "unknown";
+  if (link.status === "used") return "used";
+  if (isLive(link)) return "live";
+  return "expired";
 }
 
 /** Who is inviting, for the "X invited you" line on the signup page. */
@@ -315,7 +388,11 @@ export async function shouldDiscount(userId: string): Promise<boolean> {
  * No cap check here. The slot was spent when the link was generated; refusing to pay now
  * would mean charging somebody a slot and then keeping the reward.
  */
-export async function rewardForFirstPayment(refereeId: string): Promise<void> {
+export async function rewardForFirstPayment(
+  refereeId: string,
+  /** The invoice that just paid, so a later refund can be matched back to this reward. */
+  invoiceId?: string
+): Promise<void> {
   const [referral] = await db
     .select()
     .from(referrals)
@@ -338,6 +415,10 @@ export async function rewardForFirstPayment(refereeId: string): Promise<void> {
   }
 
   try {
+    // Resolved before the credit, not after, so a reward is never written without the handle
+    // a refund would need to find it. Failing to resolve it is not fatal — see the helper.
+    const paymentIntentId = invoiceId ? await paymentIntentFor(invoiceId) : null;
+
     // A NEGATIVE balance transaction is a credit in Stripe: the customer balance is what they
     // owe, so reducing it is money off. Positive would bill them for referring somebody.
     await stripe.customers.createBalanceTransaction(referrer.stripeCustomerId, {
@@ -353,6 +434,7 @@ export async function rewardForFirstPayment(refereeId: string): Promise<void> {
         rewardAmount: REFERRAL_REWARD,
         rewardCurrency: REFERRAL_CURRENCY,
         rewardedAt: new Date(),
+        triggerPaymentIntentId: paymentIntentId,
       })
       .where(eq(referrals.id, referral.id));
 
@@ -374,6 +456,180 @@ export async function rewardForFirstPayment(refereeId: string): Promise<void> {
   }
 }
 
+/**
+ * The PaymentIntent behind an invoice.
+ *
+ * Needs an extra call because the webhook's invoice arrives with `payments` unexpanded. Only
+ * ever runs when a reward is actually about to be paid, which is rare, so the call costs
+ * nothing in practice.
+ *
+ * Returns null rather than throwing. Without it a clawback simply cannot match this reward
+ * later, and losing the ability to reverse $10 is a far better outcome than failing the
+ * webhook and losing the reward — or worse, retrying it.
+ */
+async function paymentIntentFor(invoiceId: string): Promise<string | null> {
+  try {
+    const invoice = await stripe.invoices.retrieve(invoiceId, { expand: ["payments"] });
+    const payment = invoice.payments?.data?.[0]?.payment;
+    const intent = payment?.payment_intent;
+
+    return typeof intent === "string" ? intent : (intent?.id ?? null);
+  } catch {
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Taking it back
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Reverse a referral credit when the payment that earned it goes away.
+ *
+ * The rule: a reward stands as long as the money that bought it stands. If the referee
+ * charges back or takes a full refund on the payment we paid out on, the $10 comes back off
+ * the referrer's balance.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO
+ *   - A partial refund leaves the credit alone. Refunding $3 of goodwill should not cost
+ *     somebody else $10, and the referee did pay.
+ *   - A refund on a LATER invoice leaves it alone too, which is what the payment intent is
+ *     matched on. Somebody who stayed six months was a real referral no matter how month six
+ *     ended.
+ *
+ * Idempotent: only a `rewarded` row can be reversed, so a redelivered refund event is a
+ * no-op rather than a second $10 charged back to the referrer.
+ */
+export async function reverseReward(
+  paymentIntentId: string,
+  reason: "refund" | "dispute"
+): Promise<boolean> {
+  const [referral] = await db
+    .select()
+    .from(referrals)
+    .where(
+      and(
+        eq(referrals.triggerPaymentIntentId, paymentIntentId),
+        eq(referrals.status, "rewarded")
+      )
+    )
+    .limit(1);
+
+  if (!referral?.referrerId) return false;
+
+  const [referrer] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, referral.referrerId))
+    .limit(1);
+
+  if (!referrer?.stripeCustomerId) return false;
+
+  const amount = referral.rewardAmount ?? REFERRAL_REWARD;
+
+  try {
+    // POSITIVE this time. The balance is what they owe, so adding to it removes the credit.
+    // Sign errors here are silent and expensive, which is why both directions say so.
+    await stripe.customers.createBalanceTransaction(referrer.stripeCustomerId, {
+      amount,
+      currency: referral.rewardCurrency ?? REFERRAL_CURRENCY,
+      description: `Referral credit reversed (${reason}) — ${referral.refereeEmail}`,
+    });
+
+    await db
+      .update(referrals)
+      .set({ status: "reversed", reversedAt: new Date(), reversedReason: reason })
+      .where(eq(referrals.id, referral.id));
+
+    await logEvent({
+      type: "admin_action",
+      severity: "warn",
+      actor: "webhook",
+      userId: referrer.id,
+      email: referrer.email,
+      message: `referral credit reversed for ${referrer.email} (${reason} by ${referral.refereeEmail})`,
+      detail: { referralId: referral.id, amount, reason, paymentIntentId },
+    });
+
+    return true;
+  } catch (err) {
+    // Left `rewarded` on purpose. A Stripe blip means the next delivery of this event tries
+    // again, rather than the row saying "reversed" over a credit that is still sitting there.
+    await logError(
+      "could not reverse referral credit",
+      { error: err instanceof Error ? err.message : String(err), referralId: referral.id },
+      { userId: referrer.id, email: referrer.email, actor: "webhook" }
+    );
+
+    return false;
+  }
+}
+
+/**
+ * Put a credit back after a dispute is won.
+ *
+ * Stripe pulls the money at `dispute.created` and returns it if you win, so the referrer's
+ * credit should follow the same path. Without this, one chargeback that the customer loses
+ * still costs the referrer their $10 permanently.
+ */
+export async function restoreReward(paymentIntentId: string): Promise<boolean> {
+  const [referral] = await db
+    .select()
+    .from(referrals)
+    .where(
+      and(
+        eq(referrals.triggerPaymentIntentId, paymentIntentId),
+        eq(referrals.status, "reversed"),
+        eq(referrals.reversedReason, "dispute")
+      )
+    )
+    .limit(1);
+
+  if (!referral?.referrerId) return false;
+
+  const [referrer] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, referral.referrerId))
+    .limit(1);
+
+  if (!referrer?.stripeCustomerId) return false;
+
+  const amount = referral.rewardAmount ?? REFERRAL_REWARD;
+
+  try {
+    await stripe.customers.createBalanceTransaction(referrer.stripeCustomerId, {
+      amount: -amount,
+      currency: referral.rewardCurrency ?? REFERRAL_CURRENCY,
+      description: `Referral credit restored — ${referral.refereeEmail}`,
+    });
+
+    await db
+      .update(referrals)
+      .set({ status: "rewarded", reversedAt: null, reversedReason: null })
+      .where(eq(referrals.id, referral.id));
+
+    await logEvent({
+      type: "admin_action",
+      actor: "webhook",
+      userId: referrer.id,
+      email: referrer.email,
+      message: `referral credit restored for ${referrer.email} (dispute won)`,
+      detail: { referralId: referral.id, amount, paymentIntentId },
+    });
+
+    return true;
+  } catch (err) {
+    await logError(
+      "could not restore referral credit",
+      { error: err instanceof Error ? err.message : String(err), referralId: referral.id },
+      { userId: referrer.id, email: referrer.email, actor: "webhook" }
+    );
+
+    return false;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Reading
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -392,6 +648,8 @@ export type InviteView = {
   rewardAmount: number | null;
   rewardCurrency: string | null;
   rewardedAt: Date | null;
+  /** True when that payment was refunded or disputed and the credit was taken back. */
+  reversed: boolean;
 };
 
 export type ReferralSummary = {
@@ -436,7 +694,8 @@ export async function getSummary(user: Pick<User, "id">): Promise<ReferralSummar
     usedAt: link.usedAt,
     rewardAmount: referral?.rewardAmount ?? null,
     rewardCurrency: referral?.rewardCurrency ?? null,
-    rewardedAt: referral?.rewardedAt ?? null,
+    rewardedAt: referral?.status === "reversed" ? null : (referral?.rewardedAt ?? null),
+    reversed: referral?.status === "reversed",
   }));
 
   // Earnings come from the ledger, not from the invites above, so credit from a link that
@@ -453,7 +712,11 @@ export async function getSummary(user: Pick<User, "id">): Promise<ReferralSummar
     outstanding: invites.filter((i) => i.state === "unused").length,
     pending: ledger.filter((r) => r.status === "pending").length,
     rewarded: ledger.filter((r) => r.status === "rewarded").length,
-    earned: ledger.reduce((total, r) => total + (r.rewardAmount ?? 0), 0),
+    // Reversed credits are excluded from BOTH. The money went back to Stripe, so a total that
+    // still counted it would be a number the member could not reconcile against their invoice.
+    earned: ledger
+      .filter((r) => r.status === "rewarded")
+      .reduce((total, r) => total + (r.rewardAmount ?? 0), 0),
     currency: REFERRAL_CURRENCY,
   };
 }

@@ -138,11 +138,16 @@ export function InviteList({
 
                   <span className="text-xs text-muted-foreground">{state.label}</span>
 
-                  {invite.rewardAmount != null && (
-                    <span className="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success">
-                      +{formatMoney(invite.rewardAmount, invite.rewardCurrency ?? "usd")}
-                    </span>
-                  )}
+                  {invite.rewardAmount != null &&
+                    (invite.reversed ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground line-through">
+                        {formatMoney(invite.rewardAmount, invite.rewardCurrency ?? "usd")}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success">
+                        +{formatMoney(invite.rewardAmount, invite.rewardCurrency ?? "usd")}
+                      </span>
+                    ))}
 
                   <div className="ml-auto flex items-center gap-1">
                     {live && (
@@ -178,9 +183,11 @@ export function InviteList({
                     <>
                       Used by {mask(invite.usedByEmail)}
                       {invite.usedAt && ` on ${date(invite.usedAt)}`}
-                      {invite.rewardedAt
-                        ? " — credited"
-                        : " — credit lands when they pay"}
+                      {invite.reversed
+                        ? " — their payment was refunded, so the credit was reversed"
+                        : invite.rewardedAt
+                          ? " — credited"
+                          : " — credit lands when they pay"}
                     </>
                   ) : invite.state === "unused" ? (
                     <>

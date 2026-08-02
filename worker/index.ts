@@ -5,7 +5,7 @@ import { assertEmailConfigured } from "../lib/email";
 import { reconcileAll } from "../lib/reconcile";
 import { refreshRecentlyAdded } from "../lib/plex/recently-added-cache";
 import { pruneExpiredSessions } from "../lib/maintenance";
-import { sweepExpiredLinks } from "../lib/referrals";
+import { purgeDeadLinks, sweepExpiredLinks } from "../lib/referrals";
 import { pool } from "../lib/db";
 import { logError } from "../lib/events";
 
@@ -116,6 +116,11 @@ async function runPrune() {
   // the list say "Expired" rather than "Waiting" next to a date in the past.
   const expired = await sweepExpiredLinks();
   if (expired > 0) console.log(`  expired ${expired} referral link(s)`);
+
+  // Clears out invites that died without anybody using them. Used ones are kept forever —
+  // they are the record of a real referral — and the ledger is never touched at all.
+  const purged = await purgeDeadLinks();
+  if (purged > 0) console.log(`  purged ${purged} dead referral link(s)`);
 }
 
 /**
