@@ -4,15 +4,19 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   CreditCard,
   Gift,
   LayoutGrid,
   ListVideo,
+  Megaphone,
   MessageSquare,
   Play,
   Settings,
-  Shield,
+  ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
+  Users,
 } from "lucide-react";
 import {
   Sidebar,
@@ -20,6 +24,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuBadge,
@@ -33,10 +38,15 @@ import type { SessionUser } from "@/lib/auth/session";
 /**
  * The signed-in navigation.
  *
- * Every destination the product will eventually have is listed from day one, with the
- * unbuilt ones marked "Soon" and not clickable. Two reasons: the shape of the app stops
- * moving under people every time something ships, and it is honest about what is coming
- * rather than pretending the product is only ever what exists today.
+ * Two sections: what a member does with their own account, and — for admins only — what an
+ * admin does with everyone else's. Keeping them apart matters more than it looks: an admin is
+ * also a customer, and "Settings" meaning your own password in one place and the service's
+ * configuration in another is exactly the kind of ambiguity that gets something changed
+ * globally when somebody meant to change it for themselves.
+ *
+ * Every destination the product will have is listed from day one, with the unbuilt ones
+ * marked "Soon" and not clickable. The shape of the app then stops moving under people every
+ * time something ships.
  */
 
 type NavItem = {
@@ -44,10 +54,9 @@ type NavItem = {
   label: string;
   icon: typeof LayoutGrid;
   soon?: boolean;
-  adminOnly?: boolean;
 };
 
-const NAV: NavItem[] = [
+const ACCOUNT_NAV: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutGrid },
   { href: "/dashboard/plex", label: "Plex", icon: Play },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
@@ -56,7 +65,16 @@ const NAV: NavItem[] = [
   { href: "/dashboard/support", label: "Support", icon: MessageSquare, soon: true },
   { href: "/dashboard/referrals", label: "Referrals", icon: Gift, soon: true },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
-  { href: "/admin", label: "Admin", icon: Shield, adminOnly: true, soon: true },
+];
+
+const ADMIN_NAV: NavItem[] = [
+  { href: "/admin", label: "Overview", icon: ShieldCheck, soon: true },
+  { href: "/admin/users", label: "Users", icon: Users, soon: true },
+  { href: "/admin/support", label: "Support inbox", icon: MessageSquare, soon: true },
+  { href: "/admin/requests", label: "Requests", icon: ListVideo, soon: true },
+  { href: "/admin/announcements", label: "Announcements", icon: Megaphone, soon: true },
+  { href: "/admin/activity", label: "Activity log", icon: Activity, soon: true },
+  { href: "/admin/settings", label: "Service settings", icon: SlidersHorizontal, soon: true },
 ];
 
 export function AppSidebar({ user }: { user: SessionUser }) {
@@ -77,44 +95,34 @@ export function AppSidebar({ user }: { user: SessionUser }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV.filter((item) => !item.adminOnly || user.isAdmin).map((item) => {
-                // Exact match for the overview, prefix match for everything else, or every
-                // page would light up "Overview" as well as itself.
-                const active =
-                  item.href === "/dashboard"
-                    ? pathname === "/dashboard"
-                    : pathname.startsWith(item.href);
-
-                if (item.soon) {
-                  return (
-                    <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton disabled className="opacity-50">
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </SidebarMenuButton>
-                      <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">
-                        Soon
-                      </SidebarMenuBadge>
-                    </SidebarMenuItem>
-                  );
-                }
-
-                return (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton
-                      isActive={active}
-                      tooltip={item.label}
-                      render={<Link href={item.href} />}
-                    >
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
+              {ACCOUNT_NAV.map((item) => (
+                <NavRow key={item.href} item={item} pathname={pathname} exact={item.href === "/dashboard"} />
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {user.isAdmin && (
+          <SidebarGroup>
+            {/* Hidden when the rail is collapsed to icons, where a text heading has nowhere
+                to go. The separation still reads, because the groups keep their spacing. */}
+            <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">
+              Admin
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {ADMIN_NAV.map((item) => (
+                  <NavRow
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    exact={item.href === "/admin"}
+                  />
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter>
@@ -124,5 +132,40 @@ export function AppSidebar({ user }: { user: SessionUser }) {
         </div>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+function NavRow({
+  item,
+  pathname,
+  exact,
+}: {
+  item: NavItem;
+  pathname: string;
+  exact: boolean;
+}) {
+  // Section roots match exactly, everything else by prefix. Otherwise /admin/users would
+  // light up "Admin Overview" as well as itself.
+  const active = exact ? pathname === item.href : pathname.startsWith(item.href);
+
+  if (item.soon) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton disabled className="opacity-50">
+          <item.icon />
+          <span>{item.label}</span>
+        </SidebarMenuButton>
+        <SidebarMenuBadge className="group-data-[collapsible=icon]:hidden">Soon</SidebarMenuBadge>
+      </SidebarMenuItem>
+    );
+  }
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton isActive={active} tooltip={item.label} render={<Link href={item.href} />}>
+        <item.icon />
+        <span>{item.label}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
