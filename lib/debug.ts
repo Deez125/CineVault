@@ -1,4 +1,4 @@
-import { isProduction } from "@/lib/env";
+import { env, isProduction } from "@/lib/env";
 import type { SessionUser } from "@/lib/auth/session";
 
 /**
@@ -16,6 +16,10 @@ import type { SessionUser } from "@/lib/auth/session";
  * actual gate.
  */
 export function debugAllowed(user: Pick<SessionUser, "isAdmin"> | null): boolean {
+  // The switch comes first, and it is off by default. Everything below is about WHO may use
+  // the panel; this is about whether the panel exists at all.
+  if (!env.ENABLE_DEBUG_PANEL) return false;
+
   if (!user) return false;
   return isProduction ? user.isAdmin : true;
 }

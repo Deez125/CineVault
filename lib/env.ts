@@ -74,6 +74,18 @@ const schema = z.object({
     .default("false")
     .transform((v) => v === "true"),
 
+  /**
+   * The floating debug panel.
+   *
+   * OFF by default, and off in the environment. It reads live Stripe state and can terminate
+   * a subscription, so it is opt-in rather than something that appears because somebody
+   * happens to be an admin. Flip this to `true` when you want it back.
+   */
+  ENABLE_DEBUG_PANEL: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
   // ── Background loop tuning ────────────────────────────────────────────────
   RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60_000),
   ENFORCE_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
