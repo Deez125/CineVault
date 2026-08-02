@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { CircleCheck, LoaderCircle, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -193,7 +194,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-/** A form bound to a server action, with its own error/success line and a pending button. */
+/** A form bound to a server action: inline errors, a toast on success, a pending button. */
 function ActionForm({
   action,
   submit,
@@ -205,6 +206,25 @@ function ActionForm({
 }) {
   const [state, formAction] = useActionState<FormState, FormData>(action, null);
 
+  /**
+   * Success is a toast; failure stays on the form.
+   *
+   * They are not the same kind of message. "Saved." is finished business — it should say so
+   * and get out of the way, not sit above the button forever implying something still needs
+   * reading. An error is unfinished: it belongs next to the fields being corrected, and it
+   * has to still be there while they are corrected.
+   *
+   * Keyed on the state OBJECT, not its text. Each submission returns a fresh object, so
+   * saving twice with the same result announces twice, while a re-render announces nothing.
+   */
+  const announced = useRef<FormState>(null);
+
+  useEffect(() => {
+    if (!state || state === announced.current) return;
+    announced.current = state;
+    if (state.success) toast.success(state.success);
+  }, [state]);
+
   return (
     <form action={formAction} className="space-y-4">
       {children}
@@ -213,12 +233,6 @@ function ActionForm({
         <Alert variant="destructive">
           <TriangleAlert />
           <AlertDescription>{state.error}</AlertDescription>
-        </Alert>
-      )}
-      {state?.success && (
-        <Alert>
-          <CircleCheck className="text-success" />
-          <AlertDescription>{state.success}</AlertDescription>
         </Alert>
       )}
 
