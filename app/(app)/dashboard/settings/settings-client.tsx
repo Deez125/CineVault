@@ -76,6 +76,7 @@ export function SettingsClient({
                 defaultValue={firstName ?? ""}
                 maxLength={60}
                 autoComplete="given-name"
+                placeholder="first name"
               />
             </div>
             <div className="space-y-2">
@@ -86,6 +87,7 @@ export function SettingsClient({
                 defaultValue={lastName ?? ""}
                 maxLength={60}
                 autoComplete="family-name"
+                placeholder="last name"
               />
             </div>
           </div>
@@ -98,7 +100,7 @@ export function SettingsClient({
               defaultValue={username ?? ""}
               maxLength={USERNAME_MAX}
               autoComplete="username"
-              placeholder="yourname"
+              placeholder="username"
             />
             <p className="text-xs text-muted-foreground">
               {USERNAME_MIN} to {USERNAME_MAX} characters: letters, numbers, underscores and
