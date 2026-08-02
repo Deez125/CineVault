@@ -1,0 +1,8 @@
+# Normalise line endings. Without this, a Windows checkout commits CRLF, the Linux container
+# reads CRLF, and shell scripts fail with "bad interpreter: /bin/sh^M".
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

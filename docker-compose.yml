@@ -1,0 +1,35 @@
+# Local development database.
+#
+#   docker compose up -d postgres
+#
+# Production deployment is a separate file (docker-compose.prod.yml) — this one binds to
+# localhost and uses a throwaway password, both of which would be wrong on a server.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: cinevault-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cinevault
+      # Local development only, and it says so. Deliberately not a real-looking secret:
+      # a plausible password in a committed file is one somebody eventually reuses on a
+      # server. Override with POSTGRES_PASSWORD in the shell if you want a different one.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cinevault_local_dev_only}
+      POSTGRES_DB: cinevault
+    ports:
+      # Bound to localhost only. Without the 127.0.0.1 prefix Docker publishes on every
+      # interface and punches through the Windows firewall, exposing the database to the LAN.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Named volume, so `docker compose down` does not wipe the database. Losing this in
+      # production means every member has to re-link their Plex account.
+      - cinevault-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinevault -d cinevault"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cinevault-pgdata:

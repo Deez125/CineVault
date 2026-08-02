@@ -1,0 +1,297 @@
+import { sql } from "drizzle-orm";
+import {
+  bigserial,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+/**
+ * `WHERE <column> IS NOT NULL`, for partial unique indexes.
+ *
+ * Postgres treats every NULL as distinct, so a plain unique index on a nullable column
+ * already allows many NULLs. The partial index is here to make that explicit and to keep the
+ * index small — most rows have no Plex account linked.
+ */
+const notNull = (column: string) => sql.raw(`"${column}" IS NOT NULL`);
+
+/**
+ * The database schema.
+ *
+ * One idea runs through all of it: **Stripe is the source of truth.** A user's entitlement
+ * lives in exactly one place, their Stripe subscription. Everything stored here about their
+ * subscription is a CACHE of that, kept warm by webhooks and repaired every few minutes by
+ * the reconciler. If this database and Stripe ever disagree, Stripe is right and this is
+ * stale — never the other way around.
+ *
+ * The consequence you have to internalise: to give someone access you do not set a flag here,
+ * you create or activate their Stripe subscription and let the entitlement engine write the
+ * flag. To take it away, you cancel the subscription.
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// users
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One row per customer.
+ *
+ * The primary key is a UUID we mint, NOT the email and NOT any external id. The previous
+ * build keyed on the Discord user id, which meant the entire system was welded to Discord and
+ * removing Discord meant rebuilding from the schema up. External identities (Plex today,
+ * Discord if it ever comes back) hang off this row as nullable columns and can be detached
+ * without the account ceasing to exist.
+ */
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    /** Always stored lowercased. Compare lowercased. See lib/auth/. */
+    email: text("email").notNull(),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+
+    /** scrypt, from node:crypto. Format and verification live in lib/auth/password.ts. */
+    passwordHash: text("password_hash").notNull(),
+
+    /** Optional display name. Falls back to the email's local part in the UI. */
+    name: text("name"),
+
+    /**
+     * Granted from the ADMIN_EMAILS allowlist. Checked on every admin request, never trusted
+     * from the client. An empty allowlist means nobody is an admin.
+     */
+    isAdmin: boolean("is_admin").notNull().default(false),
+
+    /**
+     * A banned user gets nothing even if their Stripe subscription is active and paid. This
+     * is checked inside applyEntitlement, so it cannot be bypassed by any code path that
+     * grants access.
+     */
+    banned: boolean("banned").notNull().default(false),
+    bannedAt: timestamp("banned_at", { withTimezone: true }),
+    bannedReason: text("banned_reason"),
+
+    // ── Plex identity ────────────────────────────────────────────────────────
+    // One Plex account per user, enforced by a unique index below. Plex has no invite links,
+    // so these are learned through the device-PIN flow: the user's own Plex token is read
+    // once to discover who they are and then discarded. We never store it.
+    plexUserId: text("plex_user_id"),
+    plexUsername: text("plex_username"),
+    plexEmail: text("plex_email"),
+    plexLinkedAt: timestamp("plex_linked_at", { withTimezone: true }),
+
+    // ── Stripe mirror ────────────────────────────────────────────────────────
+    // Cache of the subscription. Never the authority. Money is stored in MINOR UNITS
+    // (2000 = $20.00) with its currency, and formatted only at display.
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    subStatus: text("sub_status"),
+    subPriceId: text("sub_price_id"),
+    subAmount: integer("sub_amount"),
+    subCurrency: text("sub_currency"),
+    subInterval: text("sub_interval"),
+    subCancelAtPeriodEnd: boolean("sub_cancel_at_period_end").notNull().default(false),
+    subCurrentPeriodEnd: timestamp("sub_current_period_end", { withTimezone: true }),
+
+    // ── Derived entitlement ──────────────────────────────────────────────────
+    // Written ONLY by applyEntitlement(). If you find yourself setting these anywhere else,
+    // that is the bug.
+    isMember: boolean("is_member").notNull().default(false),
+    streamLimit: integer("stream_limit").notNull().default(0),
+
+    /** none | invited | removed — the state of the Plex library share. */
+    shareState: text("share_state").notNull().default("none"),
+    invitedAt: timestamp("invited_at", { withTimezone: true }),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("users_email_key").on(t.email),
+    // One Plex account may be attached to at most one CineVault account. Without this, one
+    // person could link the same Plex account to several cheap subscriptions and stack
+    // stream slots for free. Partial so that the many NULLs don't collide.
+    uniqueIndex("users_plex_user_id_key")
+      .on(t.plexUserId)
+      .where(notNull("plex_user_id")),
+    uniqueIndex("users_stripe_customer_id_key")
+      .on(t.stripeCustomerId)
+      .where(notNull("stripe_customer_id")),
+    index("users_stripe_subscription_id_idx").on(t.stripeSubscriptionId),
+    index("users_is_member_idx").on(t.isMember),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// sessions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Sessions are ROWS, not signed cookies.
+ *
+ * A stateless signed cookie cannot be revoked: changing a password, banning an account, or
+ * an admin kicking a stolen session all become "wait for it to expire". Since this app can
+ * revoke someone's paid access, we need to be able to revoke their session too.
+ *
+ * The primary key is the SHA-256 of the token, never the token. The raw token exists only in
+ * the user's cookie. If this table leaks, nobody's session is usable.
+ */
+export const sessions = pgTable(
+  "sessions",
+  {
+    /** SHA-256 hex of the session token. */
+    id: text("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+
+    /** For a "signed in devices" list, and for spotting a session used from somewhere odd. */
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+  },
+  (t) => [index("sessions_user_id_idx").on(t.userId)]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// email tokens
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Single-use tokens for email verification and password reset.
+ *
+ * Same rule as sessions: the id is the HASH of the token, and the raw token only ever exists
+ * in the email we send. A leak of this table does not let anyone reset a password.
+ */
+export const emailTokens = pgTable(
+  "email_tokens",
+  {
+    /** SHA-256 hex of the token. */
+    id: text("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    /** verify_email | reset_password */
+    purpose: text("purpose").notNull(),
+
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Set the moment it is redeemed, so a token cannot be used twice. */
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("email_tokens_user_id_idx").on(t.userId)]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// events — the audit log
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Every consequential action, in order. This is what the admin activity feed reads, and it is
+ * the only record of why someone lost access at 3am.
+ *
+ * The email and Plex username are DENORMALISED onto each row on purpose. An audit log that
+ * says "user 4f2a-… was revoked" and then loses the account is not an audit log. These
+ * columns keep the history readable after the user row is gone.
+ */
+export const events = pgTable(
+  "events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
+
+    /** membership_gained | membership_lost | access_granted | plex_linked | … */
+    type: text("type").notNull(),
+    /** info | warn | error */
+    severity: text("severity").notNull().default("info"),
+
+    /** Nullable and SET NULL on delete: the log outlives the account. */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+
+    /** Who did it: system | webhook | reconciler | enforcer | user | admin:<uuid> */
+    actor: text("actor").notNull().default("system"),
+
+    email: text("email"),
+    plexUsername: text("plex_username"),
+
+    message: text("message").notNull(),
+    /** Structured extras. Money here is minor units + currency, formatted at display. */
+    detail: jsonb("detail"),
+  },
+  (t) => [
+    index("events_ts_idx").on(t.ts),
+    index("events_type_idx").on(t.type),
+    index("events_user_id_idx").on(t.userId),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// announcements
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Admin-posted banner on the signed-in dashboard. Built out with the admin panel. */
+export const announcements = pgTable(
+  "announcements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    body: text("body"),
+    /** info | warning | destructive | success — drives the banner colour. */
+    severity: text("severity").notNull().default("info"),
+
+    active: boolean("active").notNull().default(true),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("announcements_active_idx").on(t.active)]
+);
+
+/** Remembers that a user closed a banner, so it stays closed. */
+export const announcementDismissals = pgTable(
+  "announcement_dismissals",
+  {
+    announcementId: uuid("announcement_id")
+      .notNull()
+      .references(() => announcements.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("announcement_dismissals_key").on(t.announcementId, t.userId)]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// kv
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Small JSON state that isn't customer data — the recently-added feed marker, and so on. */
+export const kv = pgTable("kv", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+export type Session = typeof sessions.$inferSelect;
+export type EmailToken = typeof emailTokens.$inferSelect;
+export type Event = typeof events.$inferSelect;
+export type NewEvent = typeof events.$inferInsert;
+export type Announcement = typeof announcements.$inferSelect;
