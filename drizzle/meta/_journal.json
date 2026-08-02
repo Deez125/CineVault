@@ -8,6 +8,20 @@
       "when": 1785651132937,
       "tag": "0000_bored_rhino",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785660712586,
+      "tag": "0001_redundant_microchip",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785660736766,
+      "tag": "0002_cuddly_shriek",
+      "breakpoints": true
     }
   ]
 }

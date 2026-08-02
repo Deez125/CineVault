@@ -60,8 +60,24 @@ export const users = pgTable(
     /** scrypt, from node:crypto. Format and verification live in lib/auth/password.ts. */
     passwordHash: text("password_hash").notNull(),
 
-    /** Optional display name. Falls back to the email's local part in the UI. */
-    name: text("name"),
+    /**
+     * Who they are, as they'd like to be called.
+     *
+     * All optional. Signup asks for an email and a password and nothing else, because every
+     * extra required field at signup is a reason to close the tab — these get filled in from
+     * settings, or never. `displayName()` in lib/display-name.ts works out what to show.
+     */
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+
+    /**
+     * A short handle, unique case-insensitively (see the index below). Stored exactly as
+     * typed so "JoMat" stays "JoMat", but nobody else can take "jomat".
+     */
+    username: text("username"),
+
+    /** Reserved for a profile picture. Nothing writes it yet. */
+    avatarUrl: text("avatar_url"),
 
     /**
      * Granted from the ADMIN_EMAILS allowlist. Checked on every admin request, never trusted
@@ -125,6 +141,11 @@ export const users = pgTable(
     uniqueIndex("users_stripe_customer_id_key")
       .on(t.stripeCustomerId)
       .where(notNull("stripe_customer_id")),
+    // Case-insensitive: "JoMat" and "jomat" are the same handle to everyone reading it, so
+    // letting both exist would make impersonation a matter of changing one capital letter.
+    uniqueIndex("users_username_key")
+      .on(sql`lower(${t.username})`)
+      .where(notNull("username")),
     index("users_stripe_subscription_id_idx").on(t.stripeSubscriptionId),
     index("users_is_member_idx").on(t.isMember),
   ]

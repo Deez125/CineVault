@@ -19,7 +19,9 @@ export default async function SettingsPage() {
 
       <SettingsClient
         email={user.email}
-        name={user.name}
+        firstName={user.firstName}
+        lastName={user.lastName}
+        username={user.username}
         // Decided on the server: with no mail provider there is nothing to confirm, so the
         // whole confirmation UI is hidden rather than showing a permanent "Not confirmed"
         // badge next to a button that cannot help.

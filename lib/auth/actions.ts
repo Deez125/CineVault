@@ -63,19 +63,17 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
     .object({
       email: emailSchema,
       password: passwordSchema,
-      name: z.string().trim().max(80).optional(),
     })
     .safeParse({
       email: formData.get("email"),
       password: formData.get("password"),
-      name: formData.get("name") || undefined,
     });
 
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
   }
 
-  const { email, password, name } = parsed.data;
+  const { email, password } = parsed.data;
   const next = asSafePath(formData.get("next"));
   const ip = await clientIp();
 
@@ -95,7 +93,7 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
   try {
     const [created] = await db
       .insert(users)
-      .values({ email, passwordHash, name: name || null, isAdmin })
+      .values({ email, passwordHash, isAdmin })
       .returning({ id: users.id });
     userId = created.id;
   } catch (err) {

@@ -12,25 +12,78 @@ import { revokePlexAccess } from "@/lib/plex/share";
 import { isProtected } from "@/lib/plex/protected";
 import { plexConfigured } from "@/lib/env";
 import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from "./password";
+import { USERNAME_MAX, checkUsername } from "@/lib/display-name";
 import { destroyAllSessions, destroySession, getCurrentUser } from "./session";
 import type { FormState } from "./actions";
 
 /** Account settings: name, password, and closing the account. */
 
-export async function updateNameAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function updateProfileAction(
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
   const user = await getCurrentUser();
   if (!user) return { error: "Sign in first." };
 
-  const parsed = z.string().trim().max(80).safeParse(formData.get("name") ?? "");
-  if (!parsed.success) return { error: "That name is too long." };
+  const parsed = z
+    .object({
+      firstName: z.string().trim().max(60),
+      lastName: z.string().trim().max(60),
+      username: z.string().trim().max(USERNAME_MAX),
+    })
+    .safeParse({
+      firstName: formData.get("firstName") ?? "",
+      lastName: formData.get("lastName") ?? "",
+      username: formData.get("username") ?? "",
+    });
 
-  await db
-    .update(users)
-    .set({ name: parsed.data || null, updatedAt: new Date() })
-    .where(eq(users.id, user.id));
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
+  }
+
+  const { firstName, lastName, username } = parsed.data;
+
+  // Empty clears it. Only validate the shape when there is something to validate, or
+  // somebody who never wanted a username could never save their first name either.
+  if (username) {
+    const problem = checkUsername(username);
+    if (problem) return { error: problem };
+  }
+
+  try {
+    await db
+      .update(users)
+      .set({
+        firstName: firstName || null,
+        lastName: lastName || null,
+        username: username || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
+  } catch (err) {
+    // The unique index is case-insensitive, so this fires for "JoMat" when "jomat" exists.
+    // Checking first and then writing would still race two people to the same handle; letting
+    // the database be the one to decide cannot.
+    if (isUniqueViolation(err)) {
+      return { error: "That username is taken." };
+    }
+    throw err;
+  }
 
   revalidatePath("/dashboard/settings");
   return { success: "Saved." };
+}
+
+/** SQLSTATE 23505, anywhere in the cause chain. Drizzle wraps the driver's error. */
+function isUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if (typeof current === "object" && "code" in current && current.code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  return false;
 }
 
 export async function changePasswordAction(

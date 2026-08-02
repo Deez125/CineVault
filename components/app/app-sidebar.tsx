@@ -74,7 +74,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/requests", label: "Requests", icon: ListVideo, soon: true },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone },
   { href: "/admin/activity", label: "Activity log", icon: Activity },
-  { href: "/admin/settings", label: "Service settings", icon: SlidersHorizontal, soon: true },
+  { href: "/admin/settings", label: "Service settings", icon: SlidersHorizontal },
 ];
 
 export function AppSidebar({ user }: { user: SessionUser }) {

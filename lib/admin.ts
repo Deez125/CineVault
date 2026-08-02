@@ -16,7 +16,9 @@ export type UserListItem = Pick<
   User,
   | "id"
   | "email"
-  | "name"
+  | "firstName"
+  | "lastName"
+  | "username"
   | "isAdmin"
   | "banned"
   | "isMember"
@@ -50,7 +52,9 @@ export async function listUsers({
     const match = or(
       ilike(users.email, term),
       ilike(users.plexUsername, term),
-      ilike(users.name, term)
+      ilike(users.firstName, term),
+      ilike(users.lastName, term),
+      ilike(users.username, term)
     );
     if (match) where.push(match);
   }
@@ -76,7 +80,9 @@ export async function listUsers({
     .select({
       id: users.id,
       email: users.email,
-      name: users.name,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      username: users.username,
       isAdmin: users.isAdmin,
       banned: users.banned,
       isMember: users.isMember,

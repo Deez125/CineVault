@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { users, type User } from "@/lib/db/schema";
 import { stripe, isEntitling } from "./client";
 import { pickEntitling } from "@/lib/entitlements";
+import { displayName } from "@/lib/display-name";
 
 /**
  * Starting a subscription.
@@ -45,7 +46,7 @@ export async function ensureCustomer(user: User): Promise<string> {
 
   const customer = await stripe.customers.create({
     email: user.email,
-    name: user.name ?? undefined,
+    name: displayName(user),
     metadata: { userId: user.id },
   });
 

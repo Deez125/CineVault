@@ -11,11 +11,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { logoutAction } from "@/lib/auth/actions";
 import type { SessionUser } from "@/lib/auth/session";
+import { displayName, initial } from "@/lib/display-name";
 
 /** The account switcher at the bottom of the sidebar. */
 export function UserMenu({ user }: { user: SessionUser }) {
-  const label = user.name || user.email.split("@")[0];
-  const initial = label.charAt(0).toUpperCase();
+  const label = displayName(user);
 
   return (
     <DropdownMenu>
@@ -24,7 +24,7 @@ export function UserMenu({ user }: { user: SessionUser }) {
         aria-label="Account menu"
       >
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-          {initial}
+          {initial(user)}
         </span>
         <span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
           {label}

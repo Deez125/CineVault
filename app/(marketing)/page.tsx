@@ -44,7 +44,9 @@ export default async function HomePage() {
             ? {
                 id: user.id,
                 email: user.email,
-                name: user.name,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                username: user.username,
                 isAdmin: user.isAdmin,
                 banned: user.banned,
                 emailVerifiedAt: user.emailVerifiedAt,

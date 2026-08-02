@@ -29,7 +29,7 @@ const hash = (token: string) => crypto.createHash("sha256").update(token).digest
 
 export type SessionUser = Pick<
   User,
-  "id" | "email" | "name" | "isAdmin" | "banned" | "emailVerifiedAt"
+  "id" | "email" | "firstName" | "lastName" | "username" | "isAdmin" | "banned" | "emailVerifiedAt"
 >;
 
 /**
@@ -83,7 +83,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       expiresAt: sessions.expiresAt,
       id: users.id,
       email: users.email,
-      name: users.name,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      username: users.username,
       isAdmin: users.isAdmin,
       banned: users.banned,
       emailVerifiedAt: users.emailVerifiedAt,
@@ -130,7 +132,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   return {
     id: row.id,
     email: row.email,
-    name: row.name,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    username: row.username,
     isAdmin,
     banned: row.banned,
     emailVerifiedAt: row.emailVerifiedAt,

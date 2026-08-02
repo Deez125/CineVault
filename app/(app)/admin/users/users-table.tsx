@@ -34,6 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import type { UserListItem } from "@/lib/admin";
+import { displayName } from "@/lib/display-name";
 
 const money = (minor: number | null, currency: string | null) =>
   minor == null
@@ -102,7 +103,7 @@ export function UsersTable({ users, selfId }: { users: UserListItem[]; selfId: s
               <tr key={user.id} className="align-middle">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">{user.name || user.email.split("@")[0]}</span>
+                    <span className="font-medium">{displayName(user)}</span>
                     {user.isAdmin && <Tag>admin</Tag>}
                     {user.banned && <Tag tone="destructive">banned</Tag>}
                   </div>
