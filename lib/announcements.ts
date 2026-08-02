@@ -84,9 +84,14 @@ export async function listAll(): Promise<(Announcement & { dismissals: number })
   const rows = await db
     .select({
       announcement: announcements,
+      // The outer column is written out in full ON PURPOSE. Drizzle emits an UNQUALIFIED
+      // name for ${announcements.id} inside a subquery, so it resolves against the subquery's
+      // own table first. This one happens to work because announcement_dismissals has no `id`
+      // column to shadow it — which is luck, not design, and the identical pattern on tickets
+      // failed outright because ticket_messages does have one.
       dismissals: sql<number>`(
         select count(*) from ${announcementDismissals}
-        where ${announcementDismissals.announcementId} = ${announcements.id}
+        where ${announcementDismissals.announcementId} = ${sql.raw(`"announcements"."id"`)}
       )`.mapWith(Number),
     })
     .from(announcements)

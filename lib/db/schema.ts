@@ -297,6 +297,88 @@ export const announcementDismissals = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// support tickets
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A support conversation.
+ *
+ * This is what replaces the Discord #support channel, so it has to be at least as good at the
+ * one thing that channel was good at: somebody says something and the other person sees it
+ * without being told to go and look.
+ */
+export const tickets = pgTable(
+  "tickets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    /**
+     * SET NULL rather than cascade. A deleted account must not take its support history with
+     * it — the conversation is the record of what was promised, and `email` below keeps it
+     * readable afterwards.
+     */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    email: text("email").notNull(),
+
+    subject: text("subject").notNull(),
+    /** open | closed */
+    status: text("status").notNull().default("open"),
+
+    /**
+     * Denormalised from the last message. The inbox sorts by it, and computing it with a
+     * correlated subquery on every list would be a join per row for something written once
+     * per message.
+     */
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+
+    /**
+     * What each side has seen. Two timestamps rather than an unread flag, because "unread"
+     * has to mean something different to each party and a single boolean cannot.
+     */
+    userReadAt: timestamp("user_read_at", { withTimezone: true }),
+    adminReadAt: timestamp("admin_read_at", { withTimezone: true }),
+
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedBy: uuid("closed_by").references(() => users.id, { onDelete: "set null" }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("tickets_user_id_idx").on(t.userId),
+    index("tickets_status_idx").on(t.status),
+    index("tickets_last_message_at_idx").on(t.lastMessageAt),
+  ]
+);
+
+/**
+ * One message in a conversation.
+ *
+ * The id is a bigserial rather than a uuid ON PURPOSE: the live view polls with
+ * `?since=<id>`, and that only works with an ordering the client can compare. A random uuid
+ * gives no such ordering, so the cursor would have to be a timestamp — and two messages in
+ * the same millisecond would then either duplicate or vanish.
+ */
+export const ticketMessages = pgTable(
+  "ticket_messages",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    ticketId: uuid("ticket_id")
+      .notNull()
+      .references(() => tickets.id, { onDelete: "cascade" }),
+
+    authorId: uuid("author_id").references(() => users.id, { onDelete: "set null" }),
+    /** user | admin | system */
+    authorRole: text("author_role").notNull(),
+    /** Captured at the time of writing, so a later rename does not rewrite history. */
+    authorName: text("author_name").notNull(),
+
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("ticket_messages_ticket_id_idx").on(t.ticketId, t.id)]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // kv
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -316,3 +398,5 @@ export type EmailToken = typeof emailTokens.$inferSelect;
 export type Event = typeof events.$inferSelect;
 export type NewEvent = typeof events.$inferInsert;
 export type Announcement = typeof announcements.$inferSelect;
+export type Ticket = typeof tickets.$inferSelect;
+export type TicketMessage = typeof ticketMessages.$inferSelect;
