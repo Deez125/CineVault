@@ -448,6 +448,16 @@ function ChangePlanDialog({
                     {money(Math.abs(preview.prorationAmount), preview.currency)}
                   </span>
                 </div>
+                {/* Only when there is one. A "Account credit $0" row on every upgrade is
+                    noise, and it makes the real thing easy to miss when it does appear. */}
+                {preview.creditApplied > 0 && (
+                  <div className="flex justify-between gap-4">
+                    <span>Account credit</span>
+                    <span className="tabular-nums text-success">
+                      −{money(preview.creditApplied, preview.currency)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between gap-4">
                   <span>Next bill on {date(preview.nextBillDate)}</span>
                   <span className="tabular-nums text-foreground">

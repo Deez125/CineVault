@@ -127,16 +127,20 @@ export function InviteList({
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <span className={cn("size-2 shrink-0 rounded-full", state.dot)} />
 
+                  {/* The whole link, not just the code. It is what gets pasted into a
+                      message, so seeing it is how somebody checks they are about to send the
+                      right one. min-w-0 lets it truncate instead of pushing the buttons off. */}
                   <code
                     className={cn(
-                      "font-mono text-sm tracking-widest",
+                      "min-w-0 flex-1 truncate font-mono text-sm",
                       state.muted && "line-through"
                     )}
+                    title={linkFor(invite.code)}
                   >
-                    {invite.code}
+                    {linkFor(invite.code).replace(/^https?:\/\//, "")}
                   </code>
 
-                  <span className="text-xs text-muted-foreground">{state.label}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{state.label}</span>
 
                   {invite.rewardAmount != null &&
                     (invite.reversed ? (
@@ -149,7 +153,7 @@ export function InviteList({
                       </span>
                     ))}
 
-                  <div className="ml-auto flex items-center gap-1">
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
                     {live && (
                       <>
                         <Button

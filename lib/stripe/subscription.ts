@@ -102,7 +102,16 @@ export type ProrationPreview = {
   prorationAmount: number;
   /** The new recurring price, from the next full period onward. */
   nextAmount: number;
-  /** Roughly what the next invoice comes to: nextAmount + prorationAmount, never below zero. */
+  /**
+   * Account credit that will come off the next invoice, as a POSITIVE number. Referral
+   * rewards land here.
+   *
+   * Shown separately rather than folded silently into the total, because a credit somebody
+   * earned is the last thing to hide from them — the referrals page promises $10 off, and
+   * this is where they look to see it.
+   */
+  creditApplied: number;
+  /** What the next invoice actually comes to, after proration AND credit. Never below zero. */
   nextBillTotal: number;
   nextBillDate: string | null;
   currency: string;
@@ -149,13 +158,25 @@ export async function previewChange(user: User, priceId: string): Promise<Prorat
   const upgrading = targetAmount > currentAmount;
   const nextBillDate = periodEnd(subscription);
 
+  // Account credit, which the proration lines know nothing about.
+  //
+  // Stripe stores the balance as what the customer OWES, so a credit is negative. Without
+  // this, somebody with a $10 referral reward is quoted $40 and charged $30 — the safe
+  // direction to be wrong in, but still wrong, and it hides the reward at the one moment
+  // they would go looking for it.
+  //
+  // `starting_balance` is what Stripe itself says it will apply to this invoice, which is
+  // more trustworthy than reading customer.balance and reasoning about it separately.
+  const creditApplied = Math.max(0, -(preview.starting_balance ?? 0));
+
   return {
     upgrading,
     prorationAmount,
     nextAmount: targetAmount,
+    creditApplied,
     // Can't go below zero: a large credit reduces the invoice to nothing and rolls the
     // remainder forward, it never becomes a payment out to the customer.
-    nextBillTotal: Math.max(0, targetAmount + prorationAmount),
+    nextBillTotal: Math.max(0, targetAmount + prorationAmount - creditApplied),
     nextBillDate: nextBillDate?.toISOString() ?? null,
     currency: target.currency,
   };
