@@ -483,69 +483,67 @@ function ChangePlanDialog({
                 Nothing to pay today. Your access changes straight away.
               </p>
 
-              <div className="mt-3.5 border-t pt-3">
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Your next bill · {date(preview.nextBillDate)}
-                </div>
+              <div className="mt-3.5 space-y-1 border-t pt-3">
+                <Row
+                  label={`${targetLabel}, one ${sub.interval}`}
+                  value={money(preview.nextAmount, preview.currency)}
+                />
 
-                <div className="mt-2 space-y-1">
+                {preview.prorationAmount !== 0 && (
                   <Row
-                    label={`${targetLabel}, one ${sub.interval}`}
-                    value={money(preview.nextAmount, preview.currency)}
-                  />
-
-                  {preview.prorationAmount !== 0 && (
-                    <Row
-                      label={
-                        preview.prorationAmount > 0
-                          ? "The rest of this month at the new rate"
-                          : "Credit for the rest of this month"
-                      }
-                      value={`${preview.prorationAmount > 0 ? "+" : "−"}${money(
-                        Math.abs(preview.prorationAmount),
-                        preview.currency
-                      )}`}
-                      tone={preview.prorationAmount > 0 ? "default" : "success"}
-                    />
-                  )}
-
-                  {/* Only when there is one. A "$0" row on every change is noise, and it
-                      makes the real thing easy to miss when it does appear. */}
-                  {preview.creditApplied > 0 && (
-                    <Row
-                      label="Account credit"
-                      value={`−${money(preview.creditApplied, preview.currency)}`}
-                      tone="success"
-                    />
-                  )}
-
-                  <div className="flex justify-between gap-4 border-t pt-1.5 font-medium">
-                    <span>Total</span>
-                    <span className="tabular-nums">
-                      {money(preview.nextBillTotal, preview.currency)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* When the credit is bigger than the bill, the rows above sum to less than
-                    zero while the total floors at zero. Say where the difference went — an
-                    unexplained gap in a column of figures is exactly what makes a bill feel
-                    untrustworthy. */}
-                {preview.nextAmount + preview.prorationAmount - preview.creditApplied < 0 && (
-                  <p className="mt-2 text-xs text-success">
-                    Your credit covers this bill.{" "}
-                    {money(
-                      preview.creditApplied - preview.nextAmount - preview.prorationAmount,
+                    label="Rest of this month"
+                    value={`${preview.prorationAmount > 0 ? "+" : "−"}${money(
+                      Math.abs(preview.prorationAmount),
                       preview.currency
-                    )}{" "}
-                    carries over to the next one.
-                  </p>
+                    )}`}
+                    tone={preview.prorationAmount > 0 ? "default" : "success"}
+                  />
+                )}
+
+                {/* Only when there is one. A "$0" row on every change is noise, and it makes
+                    the real thing easy to miss when it does appear. */}
+                {preview.creditApplied > 0 && (
+                  <Row
+                    label="Account credit"
+                    value={`−${money(preview.creditApplied, preview.currency)}`}
+                    tone="success"
+                  />
                 )}
               </div>
 
-              <p className="mt-3 text-xs text-muted-foreground">
+              {/* The total, big, at the bottom — the one number anyone is really looking for.
+                  The date sits with it rather than in a heading above the list, because "how
+                  much" and "when" are the same question and reading them apart is what made
+                  the old layout hard to follow. */}
+              <div className="mt-3 flex items-end justify-between gap-4 border-t pt-3">
+                <div>
+                  <div className="font-medium">Total</div>
+                  <div className="text-xs text-muted-foreground">
+                    due {date(preview.nextBillDate)}
+                  </div>
+                </div>
+                <div className="text-3xl font-semibold tabular-nums">
+                  {money(preview.nextBillTotal, preview.currency)}
+                </div>
+              </div>
+
+              <p className="mt-2 text-xs text-muted-foreground">
                 Then {money(preview.nextAmount, preview.currency)} every {sub.interval}.
               </p>
+
+              {/* When the credit is bigger than the bill, the rows above sum to less than zero
+                  while the total floors at zero. Say where the difference went — an
+                  unexplained gap in a column of figures is what makes a bill feel wrong. */}
+              {preview.nextAmount + preview.prorationAmount - preview.creditApplied < 0 && (
+                <p className="mt-1 text-xs text-success">
+                  Your credit covers this.{" "}
+                  {money(
+                    preview.creditApplied - preview.nextAmount - preview.prorationAmount,
+                    preview.currency
+                  )}{" "}
+                  carries over.
+                </p>
+              )}
             </div>
           )}
         </div>
