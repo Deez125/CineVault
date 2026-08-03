@@ -157,7 +157,17 @@ async function creditBreakdown(
     let used = 0;
 
     for (const tx of txs) {
-      const isReferral = tx.metadata?.kind === "referral";
+      // Metadata first, description second.
+      //
+      // The fallback exists for transactions written before the metadata was added — they
+      // are real referral credits with an empty metadata object, and without this they get
+      // filed under "account credit" forever. Every description this code writes begins
+      // "Referral credit", including the reversed and restored variants.
+      //
+      // Not a licence to parse descriptions generally: this is a bounded read of strings we
+      // wrote ourselves, and new transactions never reach it.
+      const isReferral =
+        tx.metadata?.kind === "referral" || /^referral credit/i.test(tx.description ?? "");
 
       if (isReferral) {
         // Net, so a clawback subtracts from what referrals have earned rather than counting

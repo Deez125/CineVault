@@ -17,6 +17,7 @@ import {
   Receipt,
   RotateCcw,
   TriangleAlert,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -233,7 +234,10 @@ export function BillingClient({
             </div>
 
             <div className="flex justify-between gap-4">
-              <span className="text-muted-foreground">Account credit</span>
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <User className="size-3.5 text-muted-foreground" />
+                Account credit
+              </span>
               <span className="tabular-nums">
                 {money(sub.credit.fromAdjustments, sub.credit.currency)}
               </span>
@@ -339,15 +343,6 @@ export function BillingClient({
         </section>
       )}
 
-      {!sub.cancelAtPeriodEnd && (
-        <button
-          onClick={() => setCancelling(true)}
-          className="w-full border-t pt-5 text-center text-xs text-muted-foreground transition-colors hover:text-destructive"
-        >
-          Cancel my subscription
-        </button>
-      )}
-
       {/* Keyed on the open flag so each opening is a fresh mount. That is what lets the
           dialogs initialise their state from props instead of resetting it in an effect. */}
       <ChangePlanDialog
@@ -359,6 +354,12 @@ export function BillingClient({
         onChanged={async (priceId) => {
           const ok = await changePlan(priceId);
           if (ok) setChanging(false);
+        }}
+        onCancel={() => {
+          // Close this one before opening the other. Two dialogs open at once fight over
+          // focus and the page ends up scroll-locked by whichever unmounts second.
+          setChanging(false);
+          setCancelling(true);
         }}
         busy={busy}
       />
@@ -450,6 +451,7 @@ function ChangePlanDialog({
   tiers,
   sub,
   onChanged,
+  onCancel,
   busy,
 }: {
   open: boolean;
@@ -457,6 +459,8 @@ function ChangePlanDialog({
   tiers: Tier[];
   sub: SubscriptionDetail;
   onChanged: (priceId: string) => void;
+  /** Hands off to the cancel dialog. Omitted where cancelling is not on offer. */
+  onCancel?: () => void;
   busy: boolean;
 }) {
   // Initialised once per mount. The parent remounts this via `key` when the dialog opens, so
@@ -629,6 +633,22 @@ function ChangePlanDialog({
         </div>
 
         <DialogFooter>
+          {/* Cancelling lives here because this is where somebody comes when their plan is
+              wrong — sometimes the answer is a smaller plan and sometimes it is none at all.
+              Kept as plain text rather than a button: it should be findable by anyone
+              looking for it and never compete with the action we would rather they take.
+              `mr-auto` pushes it left, away from the two real buttons. */}
+          {onCancel && !sub.cancelAtPeriodEnd && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCancel}
+              className="py-1 text-xs text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50 sm:mr-auto"
+            >
+              Cancel my subscription
+            </button>
+          )}
+
           <DialogClose
             render={
               <Button variant="secondary" size="lg" disabled={busy}>
