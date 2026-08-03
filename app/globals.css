@@ -69,6 +69,13 @@
      accent     the hover/active wash on rows, nav items and menu entries       */
   --secondary: #f4f5f8;
   --secondary-foreground: #111318;
+  /* Hover for secondary buttons, written out rather than computed.
+     It used to be color-mix(in oklch, --secondary, --foreground 5%). Both foregrounds have
+     almost no chroma, and a colour with no chroma has no meaningful hue — so oklch
+     interpolation pulled the result toward 0°, which is RED. Grey buttons glowed pink on
+     hover. Every colour belongs in this file anyway; a mix computed in a class name is a
+     colour that lives outside the index and cannot be found by searching it. */
+  --secondary-hover: #e8ebf1;
 
   --muted: #f4f5f8;
   --muted-foreground: #646c7e;
@@ -161,6 +168,8 @@
 
   --secondary: #1c2029;
   --secondary-foreground: #e9ecf3;
+  /* A step lighter than --secondary, same hue family. See the note in :root. */
+  --secondary-hover: #262c38;
 
   --muted: #1c2029;
   --muted-foreground: #8b93a7;
@@ -231,6 +240,7 @@
 
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary-hover: var(--secondary-hover);
 
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);

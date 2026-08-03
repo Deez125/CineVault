@@ -54,16 +54,15 @@ export function PlanPicker({
                 : "hover:border-foreground/25 hover:bg-muted/50"
             )}
           >
+            {/* Name only. The descriptions were longer than the card and truncated to
+                "For a household ..." on every one of them, which is not a description — it
+                is clutter that pushed the name into wrapping. The plan names already say
+                what the plans are. */}
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{tier.label}</span>
-                {isCurrent && (
-                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Current
-                  </span>
-                )}
-              </div>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{tier.blurb}</p>
+              <div className="truncate text-sm font-medium">{tier.label}</div>
+              {isCurrent && (
+                <div className="truncate text-xs text-muted-foreground">Current</div>
+              )}
             </div>
 
             <div className="flex shrink-0 items-center gap-2.5">

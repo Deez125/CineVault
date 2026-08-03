@@ -12,6 +12,19 @@ import type { Appearance } from "@stripe/stripe-js";
  * card form follows the site instead of drifting away from it the first time a colour
  * changes. That does mean this must be called in the BROWSER, after styles have loaded.
  */
+/**
+ * A translucent version of a hex colour.
+ *
+ * Deliberately NOT `color-mix(in oklch, colour X%, transparent)`. `transparent` is black at
+ * zero alpha, and interpolating a saturated colour toward it in oklch drags lightness and hue
+ * as well as opacity — the focus ring came out muddy rather than a fainter blue. Appending
+ * hex alpha changes only the alpha.
+ */
+function alpha(hex: string, amount: number): string {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  return hex + Math.round(amount * 255).toString(16).padStart(2, "0");
+}
+
 export function stripeAppearance(): Appearance {
   const css = getComputedStyle(document.documentElement);
   const token = (name: string, fallback: string) =>
@@ -56,7 +69,7 @@ export function stripeAppearance(): Appearance {
       ".Input": { backgroundColor: surface, border: `1px solid ${border}`, boxShadow: "none" },
       ".Input:focus": {
         border: `1px solid ${primary}`,
-        boxShadow: `0 0 0 3px color-mix(in oklch, ${primary} 30%, transparent)`,
+        boxShadow: `0 0 0 3px ${alpha(primary, 0.3)}`,
       },
       ".Input--invalid": { border: `1px solid ${danger}`, boxShadow: "none" },
 
