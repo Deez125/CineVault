@@ -207,20 +207,54 @@ export function BillingClient({
         )}
       </section>
 
-      {/* ── Credit ─────────────────────────────────────────────────────────── */}
-      {(sub.credit.available > 0 ||
-        sub.credit.fromReferrals > 0 ||
-        sub.credit.fromAdjustments > 0) && (
-        <section className="rounded-xl border bg-card">
-          <div className="flex items-end justify-between gap-4 p-5">
-            <div>
-              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Account credit
+      {/* ── Credit ───────────────────────────────────────────────────────────
+          Always on screen, zeroes included. Hiding it until there is money in it means
+          nobody discovers credit exists until the day they happen to have some, and
+          somebody looking to check whether their referral paid out finds nothing at all
+          rather than a clear $0. */}
+      <section className="rounded-xl border bg-card">
+          <div className="px-5 pt-5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Your credit
+          </div>
+
+          {/* Named exactly as the customer would name them. "Referral rewards" and "Refunds
+              and plan changes" described where the money came from but did not use the words
+              anybody is actually looking for. Every row is always shown, zero or not, because
+              the point of this panel is that the two sources are visible and add up. */}
+          <div className="mt-3 space-y-1 px-5 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <Gift className="size-3.5 text-success" />
+                Referral credit
+              </span>
+              <span className="tabular-nums">
+                {money(sub.credit.fromReferrals, sub.credit.currency)}
+              </span>
+            </div>
+
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Account credit</span>
+              <span className="tabular-nums">
+                {money(sub.credit.fromAdjustments, sub.credit.currency)}
+              </span>
+            </div>
+
+            {/* Only when some has been spent, so the rows still add up to the total below. */}
+            {sub.credit.used > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Used on past bills</span>
+                <span className="tabular-nums">
+                  −{money(sub.credit.used, sub.credit.currency)}
+                </span>
               </div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {sub.credit.available > 0
-                  ? "Comes off your next bill automatically"
-                  : "Nothing available right now"}
+            )}
+          </div>
+
+          <div className="mt-3 flex items-end justify-between gap-4 border-t px-5 py-4">
+            <div>
+              <div className="font-medium">Total credit</div>
+              <div className="text-xs text-muted-foreground">
+                {sub.credit.available > 0 ? "ready to use" : "nothing available yet"}
               </div>
             </div>
             <div
@@ -232,53 +266,11 @@ export function BillingClient({
             </div>
           </div>
 
-          {/* Where it came from. Only the lines that have a number — a column of zeroes
-              tells nobody anything. */}
-          <div className="space-y-1 border-t px-5 py-3.5 text-sm">
-            {sub.credit.fromReferrals > 0 && (
-              <div className="flex justify-between gap-4">
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  <Gift className="size-3.5 text-success" />
-                  Referral rewards
-                </span>
-                <span className="tabular-nums">
-                  {money(sub.credit.fromReferrals, sub.credit.currency)}
-                </span>
-              </div>
-            )}
-
-            {sub.credit.fromAdjustments > 0 && (
-              <div className="flex justify-between gap-4">
-                <span className="text-muted-foreground">Refunds and plan changes</span>
-                <span className="tabular-nums">
-                  {money(sub.credit.fromAdjustments, sub.credit.currency)}
-                </span>
-              </div>
-            )}
-
-            {sub.credit.used > 0 && (
-              <div className="flex justify-between gap-4">
-                <span className="text-muted-foreground">Used on past bills</span>
-                <span className="tabular-nums">
-                  −{money(sub.credit.used, sub.credit.currency)}
-                </span>
-              </div>
-            )}
-
-            <div className="flex justify-between gap-4 border-t pt-1.5 font-medium">
-              <span>Available now</span>
-              <span className="tabular-nums">
-                {money(sub.credit.available, sub.credit.currency)}
-              </span>
-            </div>
-          </div>
-
           <p className="border-t px-5 py-3 text-xs text-muted-foreground">
-            Credit is spent automatically — on your next bill, and on any upgrade you make
-            before then. There is nothing to redeem.
+            Spent automatically — on your next bill, and on any upgrade you make before then.
+            There is nothing to redeem.
           </p>
         </section>
-      )}
 
       {/* ── Card ───────────────────────────────────────────────────────────── */}
       <section className="flex items-center justify-between gap-4 rounded-xl border bg-card p-5">
