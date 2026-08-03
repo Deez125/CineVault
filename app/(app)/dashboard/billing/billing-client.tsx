@@ -11,6 +11,7 @@ import {
   CalendarDays,
   CreditCard,
   ExternalLink,
+  Gift,
   LoaderCircle,
   Lock,
   Receipt,
@@ -124,10 +125,40 @@ export function BillingClient({
             </span>
           ) : (
             <span className="text-muted-foreground">
-              Renews {date(sub.currentPeriodEnd)} for {money(sub.amount, sub.currency)}
+              Renews {date(sub.currentPeriodEnd)} for{" "}
+              {sub.creditBalance > 0 ? (
+                <>
+                  {/* Both numbers, not just the discounted one. "Renews for $10" on a $20
+                      plan looks like a pricing error unless the full price is next to it. */}
+                  <span className="line-through">{money(sub.amount, sub.currency)}</span>{" "}
+                  <span className="font-medium text-success">
+                    {money(Math.max(0, sub.amount - sub.creditBalance), sub.currency)}
+                  </span>
+                </>
+              ) : (
+                money(sub.amount, sub.currency)
+              )}
             </span>
           )}
         </div>
+
+        {sub.creditBalance > 0 && (
+          <div className="flex items-center gap-2 border-t px-5 py-3.5 text-sm">
+            <Gift className="size-4 shrink-0 text-success" />
+            <span>
+              <span className="font-medium text-success">
+                {money(sub.creditBalance, sub.currency)} credit
+              </span>
+              <span className="text-muted-foreground">
+                {" "}
+                on your account
+                {sub.creditBalance > sub.amount
+                  ? " — covers your next bill, and the rest rolls over."
+                  : " — comes off your next bill automatically."}
+              </span>
+            </span>
+          </div>
+        )}
 
         {sub.cancelAtPeriodEnd && (
           <div className="border-t p-5">

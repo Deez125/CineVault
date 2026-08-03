@@ -38,6 +38,14 @@ export type SubscriptionDetail = {
   interval: string;
   cancelAtPeriodEnd: boolean;
   currentPeriodEnd: string | null;
+  /**
+   * Account credit sitting on the customer, as a POSITIVE number. Referral rewards land here.
+   *
+   * Worth surfacing on the billing page rather than only at checkout: somebody who has just
+   * been told they earned $10 will go looking for it here, and a renewal line that still
+   * quotes the full price reads as though the reward never happened.
+   */
+  creditBalance: number;
   paymentMethod: PaymentMethodSummary | null;
   invoices: InvoiceSummary[];
 };
@@ -73,6 +81,12 @@ export async function getSubscriptionDetail(user: User): Promise<SubscriptionDet
   const price = item?.price;
   if (!price) return null;
 
+  // Stripe stores the balance as what the customer OWES, so a credit is negative. Flip it,
+  // and treat "they owe us something" as no credit rather than as a negative one — that case
+  // is settled on the invoice and is not this card's job to explain.
+  const customer = await stripe.customers.retrieve(user.stripeCustomerId);
+  const creditBalance = customer.deleted ? 0 : Math.max(0, -customer.balance);
+
   return {
     id: subscription.id,
     status: subscription.status,
@@ -83,6 +97,7 @@ export async function getSubscriptionDetail(user: User): Promise<SubscriptionDet
     interval: price.recurring?.interval ?? "month",
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     currentPeriodEnd: periodEnd(subscription)?.toISOString() ?? null,
+    creditBalance,
     paymentMethod: await resolvePaymentMethod(subscription, user.stripeCustomerId),
     invoices: await listInvoices(user.stripeCustomerId),
   };
