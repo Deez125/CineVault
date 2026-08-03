@@ -387,6 +387,11 @@ function ChangePlanDialog({
   } | null>(null);
 
   const changed = selected !== sub.priceId;
+
+  // Naming the plan turns "Upgrade" into "Upgrading to 2 Users", so the header says what is
+  // happening rather than only that something is. Falls back to a neutral word if the tier
+  // list and the selection ever disagree.
+  const targetLabel = tiers.find((t) => t.priceId === selected)?.label ?? "your new plan";
   const previewing = changed && result?.priceId !== selected;
   const preview = result?.priceId === selected ? result.data : null;
 
@@ -456,6 +461,13 @@ function ChangePlanDialog({
               Working out the price
             </p>
           ) : (
+            /* Laid out as a bill that ADDS UP.
+             *
+             * The previous version listed the proration, the credit and the total, but not
+             * the plan charge itself — so the biggest number on the next invoice was the one
+             * number missing, and the rows visibly failed to reconcile ($9.99 − $10 is not
+             * $29.99). Every term is here now, in the order they combine, with the total
+             * under a rule. Nobody should have to work out what we left out. */
             <div className="rounded-lg border bg-muted/40 p-4 text-sm">
               <div className="flex items-center gap-2 font-medium">
                 {preview.upgrading ? (
@@ -463,48 +475,76 @@ function ChangePlanDialog({
                 ) : (
                   <ArrowDown className="size-4 text-warning" />
                 )}
-                {preview.upgrading ? "Upgrade" : "Downgrade"}
+                {preview.upgrading ? "Upgrading" : "Downgrading"} to {targetLabel}
               </div>
 
-              <div className="mt-2.5 space-y-1 text-muted-foreground">
-                <div className="flex justify-between gap-4">
-                  <span>
-                    {preview.prorationAmount >= 0
-                      ? "Added to your next bill"
-                      : "Credited to your next bill"}
-                  </span>
-                  <span
-                    className={`tabular-nums ${preview.prorationAmount < 0 ? "text-success" : "text-foreground"}`}
-                  >
-                    {money(Math.abs(preview.prorationAmount), preview.currency)}
-                  </span>
+              {/* Answered first because it is the question everybody actually has. */}
+              <p className="mt-1.5 text-muted-foreground">
+                Nothing to pay today. Your access changes straight away.
+              </p>
+
+              <div className="mt-3.5 border-t pt-3">
+                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Your next bill · {date(preview.nextBillDate)}
                 </div>
-                {/* Only when there is one. A "Account credit $0" row on every upgrade is
-                    noise, and it makes the real thing easy to miss when it does appear. */}
-                {preview.creditApplied > 0 && (
-                  <div className="flex justify-between gap-4">
-                    <span>Account credit</span>
-                    <span className="tabular-nums text-success">
-                      −{money(preview.creditApplied, preview.currency)}
+
+                <div className="mt-2 space-y-1">
+                  <Row
+                    label={`${targetLabel}, one ${sub.interval}`}
+                    value={money(preview.nextAmount, preview.currency)}
+                  />
+
+                  {preview.prorationAmount !== 0 && (
+                    <Row
+                      label={
+                        preview.prorationAmount > 0
+                          ? "The rest of this month at the new rate"
+                          : "Credit for the rest of this month"
+                      }
+                      value={`${preview.prorationAmount > 0 ? "+" : "−"}${money(
+                        Math.abs(preview.prorationAmount),
+                        preview.currency
+                      )}`}
+                      tone={preview.prorationAmount > 0 ? "default" : "success"}
+                    />
+                  )}
+
+                  {/* Only when there is one. A "$0" row on every change is noise, and it
+                      makes the real thing easy to miss when it does appear. */}
+                  {preview.creditApplied > 0 && (
+                    <Row
+                      label="Account credit"
+                      value={`−${money(preview.creditApplied, preview.currency)}`}
+                      tone="success"
+                    />
+                  )}
+
+                  <div className="flex justify-between gap-4 border-t pt-1.5 font-medium">
+                    <span>Total</span>
+                    <span className="tabular-nums">
+                      {money(preview.nextBillTotal, preview.currency)}
                     </span>
                   </div>
+                </div>
+
+                {/* When the credit is bigger than the bill, the rows above sum to less than
+                    zero while the total floors at zero. Say where the difference went — an
+                    unexplained gap in a column of figures is exactly what makes a bill feel
+                    untrustworthy. */}
+                {preview.nextAmount + preview.prorationAmount - preview.creditApplied < 0 && (
+                  <p className="mt-2 text-xs text-success">
+                    Your credit covers this bill.{" "}
+                    {money(
+                      preview.creditApplied - preview.nextAmount - preview.prorationAmount,
+                      preview.currency
+                    )}{" "}
+                    carries over to the next one.
+                  </p>
                 )}
-                <div className="flex justify-between gap-4">
-                  <span>Next bill on {date(preview.nextBillDate)}</span>
-                  <span className="tabular-nums text-foreground">
-                    {money(preview.nextBillTotal, preview.currency)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-4 border-t pt-1">
-                  <span>Then every {sub.interval}</span>
-                  <span className="tabular-nums text-foreground">
-                    {money(preview.nextAmount, preview.currency)}
-                  </span>
-                </div>
               </div>
 
               <p className="mt-3 text-xs text-muted-foreground">
-                Nothing is charged today. Your access changes straight away.
+                Then {money(preview.nextAmount, preview.currency)} every {sub.interval}.
               </p>
             </div>
           )}
@@ -713,5 +753,23 @@ function CardForm({ onSaved }: { onSaved: () => void }) {
         Secured by Stripe. Your card never touches our servers.
       </p>
     </form>
+  );
+}
+
+/** One line of the next-bill breakdown. Labels left, tabular figures right so they align. */
+function Row({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "success";
+}) {
+  return (
+    <div className="flex justify-between gap-4">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`tabular-nums ${tone === "success" ? "text-success" : ""}`}>{value}</span>
+    </div>
   );
 }
