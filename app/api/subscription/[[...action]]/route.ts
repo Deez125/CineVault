@@ -11,6 +11,7 @@ import {
   finishCardUpdate,
   getSubscriptionDetail,
   previewChange,
+  StripeCardDeclinedError,
   resumePlan,
   startCardUpdate,
 } from "@/lib/stripe/subscription";
@@ -81,8 +82,19 @@ export async function POST(
         const tier = await tierForPrice(priceId);
         if (!tier) return Response.json({ error: "unknown plan" }, { status: 400 });
 
-        const subscription = await changePlan(user, priceId);
-        const result = await applyEntitlement(user.id, { subscription, actor: "user" });
+        const { clientSecret } = await changePlan(user, priceId);
+
+        // The card needs the holder to confirm. NOTHING has changed yet — the plan swaps
+        // only once that confirmation succeeds and Stripe applies the pending update, which
+        // arrives here as a webhook. Deliberately does not touch entitlement: granting on the
+        // strength of an unpaid invoice is the whole thing this design avoids.
+        if (clientSecret) {
+          return Response.json({ ok: false, requiresAction: true, clientSecret });
+        }
+
+        // Re-derived rather than judged from the object above, so the same rule applies here
+        // as in the webhook. See the note on ApplyOptions.
+        const result = await applyEntitlement(user.id, { actor: "user" });
 
         return Response.json({ ok: true, streamLimit: result?.streamLimit ?? tier.streams });
       }
@@ -125,6 +137,12 @@ export async function POST(
     }
     if (err instanceof BadRequest) {
       return Response.json({ error: err.message }, { status: 400 });
+    }
+    // A refused card is the customer's problem to fix, not a fault worth logging as an error
+    // and not something to hide behind "that didn't work". 402 is the honest status, and the
+    // message already says the plan is unchanged.
+    if (err instanceof StripeCardDeclinedError) {
+      return Response.json({ error: err.message, code: err.code }, { status: 402 });
     }
 
     await logError(

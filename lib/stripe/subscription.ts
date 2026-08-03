@@ -106,6 +106,17 @@ export async function getSubscriptionDetail(user: User): Promise<SubscriptionDet
 export type ProrationPreview = {
   upgrading: boolean;
   /**
+   * What the card is charged the moment they confirm, after credit. Zero on a downgrade, and
+   * zero when account credit covers the whole difference.
+   */
+  dueNow: number;
+  /**
+   * Credit ADDED to the account by this change, as a positive number. Downgrades produce
+   * this: the unused part of the dearer plan, less the cost of the cheaper one for the rest
+   * of the period.
+   */
+  creditBack: number;
+  /**
    * Net proration in minor units. POSITIVE means it is added to the next invoice, NEGATIVE
    * means it is a credit against it.
    *
@@ -152,7 +163,9 @@ export async function previewChange(user: User, priceId: string): Promise<Prorat
     subscription: subscription.id,
     subscription_details: {
       items: [{ id: item.id, price: priceId }],
-      proration_behavior: "create_prorations",
+      // Must match what changePlan actually does, or the quote describes a different
+      // transaction from the one the button performs.
+      proration_behavior: "always_invoice",
     },
   });
 
@@ -182,35 +195,137 @@ export async function previewChange(user: User, priceId: string): Promise<Prorat
   //
   // `starting_balance` is what Stripe itself says it will apply to this invoice, which is
   // more trustworthy than reading customer.balance and reasoning about it separately.
-  const creditApplied = Math.max(0, -(preview.starting_balance ?? 0));
+  const balance = Math.max(0, -(preview.starting_balance ?? 0));
+
+  // Upgrades charge; downgrades credit. Split them, because they are different sentences on
+  // screen — "you pay this now" and "this goes on your account" — and conflating them into
+  // one signed number is what made the old panel unreadable.
+  const rawDue = prorationAmount > 0 ? prorationAmount : 0;
+  const creditApplied = Math.min(balance, rawDue);
+  const dueNow = Math.max(0, rawDue - creditApplied);
+  const creditBack = prorationAmount < 0 ? -prorationAmount : 0;
 
   return {
     upgrading,
+    dueNow,
+    creditBack,
     prorationAmount,
     nextAmount: targetAmount,
     creditApplied,
-    // Can't go below zero: a large credit reduces the invoice to nothing and rolls the
-    // remainder forward, it never becomes a payment out to the customer.
-    nextBillTotal: Math.max(0, targetAmount + prorationAmount - creditApplied),
+    // The proration is settled TODAY now, so the next bill is simply the new plan price —
+    // less whatever credit is still on the account afterwards. An upgrade spends some of the
+    // balance; a downgrade adds to it.
+    nextBillTotal: Math.max(0, targetAmount - (balance - creditApplied + creditBack)),
     nextBillDate: nextBillDate?.toISOString() ?? null,
     currency: target.currency,
   };
 }
 
-/** Swap the price on the existing subscription, prorated. */
-export async function changePlan(user: User, priceId: string): Promise<Stripe.Subscription> {
+export type ChangeResult = {
+  subscription: Stripe.Subscription;
+  /**
+   * Set when the bank wants the cardholder to confirm (3-D Secure). The plan has NOT changed
+   * yet; it changes when this is confirmed in the browser and the invoice is paid.
+   */
+  clientSecret?: string;
+};
+
+/**
+ * Switch plans, settling the difference NOW.
+ *
+ * `always_invoice` bills the proration immediately rather than parking it for the next
+ * invoice. That is worth an API call and a decline path, because deferring it accumulates:
+ * change plan twice in one period and the next bill carries FOUR proration lines, two of them
+ * from a change made weeks ago. Measured on the sandbox, a $20→$30→$40 pair of upgrades
+ * showed "+$19.97 rest of this month" when the second change alone was $9.98 — arithmetically
+ * right, impossible to read, and impossible to explain to a customer.
+ *
+ * Settling as we go means each change costs exactly its own difference and nothing else, and
+ * a downgrade hands back its credit there and then instead of vanishing into a future
+ * invoice.
+ *
+ * `pending_if_incomplete` is what makes it safe. The subscription is NOT modified until the
+ * money clears: a decline throws and leaves the old plan untouched, and a card needing
+ * confirmation parks the change as a pending update that only applies once confirmed. There
+ * is no state where somebody is moved to a plan they have not paid for.
+ */
+export async function changePlan(user: User, priceId: string): Promise<ChangeResult> {
   const subscription = await requireSubscription(user);
   const item = subscription.items.data[0];
 
-  if (item.price.id === priceId) return subscription;
+  if (item.price.id === priceId) return { subscription };
 
-  return stripe.subscriptions.update(subscription.id, {
+  const updated = await stripe.subscriptions.update(subscription.id, {
     items: [{ id: item.id, price: priceId }],
-    proration_behavior: "create_prorations",
+    proration_behavior: "always_invoice",
+    payment_behavior: "pending_if_incomplete",
     // Keep the metadata link intact; an update that dropped it would orphan the webhook's
     // fallback route back to this user.
     metadata: { userId: user.id },
+    expand: ["latest_invoice.confirmation_secret"],
   });
+
+  // No pending update means the invoice was paid outright and the plan has already changed.
+  if (!updated.pending_update) return { subscription: updated };
+
+  // A pending update means the money did not clear. Two very different reasons, and they need
+  // opposite handling, so ask the PaymentIntent which one it is:
+  //
+  //   requires_action          — the bank wants the cardholder to confirm. Recoverable.
+  //   requires_payment_method  — declined. Not recoverable with this card.
+  //
+  // Both leave the subscription on the OLD plan, which is the guarantee that matters. Both
+  // also hand back a client secret, so the secret alone cannot tell them apart — sending a
+  // declined card to the browser's confirmation flow produces "this PaymentIntent requires a
+  // payment method", which tells the customer nothing about their card being refused.
+  const invoice = typeof updated.latest_invoice === "string" ? null : updated.latest_invoice;
+  const status = await paymentStatus(invoice);
+
+  if (status?.state === "requires_action") {
+    const secret = (invoice as { confirmation_secret?: { client_secret?: string } } | null)
+      ?.confirmation_secret?.client_secret;
+
+    if (secret) return { subscription: updated, clientSecret: secret };
+  }
+
+  // Declined, or something we cannot recover from. Void the invoice so the pending update
+  // goes with it — otherwise it sits on the subscription for a day, and any later payment of
+  // that invoice would silently apply a plan change nobody is expecting.
+  if (invoice?.id) await stripe.invoices.voidInvoice(invoice.id).catch(() => {});
+
+  throw new StripeCardDeclinedError(
+    status?.code === "card_declined"
+      ? "Your card was declined, so your plan hasn't changed. Try a different card."
+      : "That payment didn't go through, so your plan hasn't changed."
+  );
+}
+
+export class StripeCardDeclinedError extends Error {
+  readonly code = "CARD_DECLINED";
+  constructor(message: string) {
+    super(message);
+    this.name = "StripeCardDeclinedError";
+  }
+}
+
+/** The PaymentIntent behind an invoice, and why it has not settled. */
+async function paymentStatus(
+  invoice: Stripe.Invoice | null
+): Promise<{ state: string; code?: string } | null> {
+  if (!invoice?.id) return null;
+
+  try {
+    const full = await stripe.invoices.retrieve(invoice.id, { expand: ["payments"] });
+    const payment = full.payments?.data?.[0]?.payment;
+    const intent = payment?.payment_intent;
+    const id = typeof intent === "string" ? intent : intent?.id;
+    if (!id) return null;
+
+    const pi = await stripe.paymentIntents.retrieve(id);
+    return { state: pi.status, code: pi.last_payment_error?.code };
+  } catch {
+    return null;
+  }
 }
 
 /**

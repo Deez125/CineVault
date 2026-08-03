@@ -89,6 +89,49 @@ export function BillingClient({
     }
   }
 
+  /**
+   * Change plan, including the bank-confirmation detour some cards require.
+   *
+   * Kept separate from `act` because this one has three outcomes rather than two. A card that
+   * needs 3-D Secure comes back as `requiresAction`, and at that moment NOTHING has changed:
+   * the subscription is still on the old plan and Stripe is holding the new one as a pending
+   * update. Only after the holder confirms does the invoice pay and the plan swap, which
+   * arrives as a webhook. Reporting "Plan updated" before that would be a lie.
+   */
+  async function changePlan(priceId: string): Promise<boolean> {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/subscription/change", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ priceId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "That didn't work.");
+
+      if (data.requiresAction && data.clientSecret) {
+        const stripe = await stripePromise;
+        if (!stripe) throw new Error("Couldn't reach Stripe. Try again.");
+
+        toast.info("Your bank needs to confirm this payment.");
+        const { error } = await stripe.handleNextAction({ clientSecret: data.clientSecret });
+
+        // Declined or dismissed. The old plan is untouched, so there is nothing to undo —
+        // which is the entire reason for pending_if_incomplete.
+        if (error) throw new Error(error.message ?? "That payment wasn't confirmed.");
+      }
+
+      await refresh();
+      toast.success("Plan updated.");
+      return true;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "That didn't work.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       {/* ── Plan ───────────────────────────────────────────────────────────── */}
@@ -266,11 +309,8 @@ export function BillingClient({
         tiers={tiers}
         sub={sub}
         onChanged={async (priceId) => {
-          const ok = await act("change", { priceId });
-          if (ok) {
-            setChanging(false);
-            toast.success("Plan updated.");
-          }
+          const ok = await changePlan(priceId);
+          if (ok) setChanging(false);
         }}
         busy={busy}
       />
@@ -461,13 +501,10 @@ function ChangePlanDialog({
               Working out the price
             </p>
           ) : (
-            /* Laid out as a bill that ADDS UP.
-             *
-             * The previous version listed the proration, the credit and the total, but not
-             * the plan charge itself — so the biggest number on the next invoice was the one
-             * number missing, and the rows visibly failed to reconcile ($9.99 − $10 is not
-             * $29.99). Every term is here now, in the order they combine, with the total
-             * under a rule. Nobody should have to work out what we left out. */
+            /* Two questions, in the order people ask them: what happens to my money right
+             * now, and what happens every month after. Everything settles today, so there is
+             * no third question about a future invoice carrying adjustments — which is what
+             * made the old panel unreadable once somebody changed plan twice. */
             <div className="rounded-lg border bg-muted/40 p-4 text-sm">
               <div className="flex items-center gap-2 font-medium">
                 {preview.upgrading ? (
@@ -478,72 +515,67 @@ function ChangePlanDialog({
                 {preview.upgrading ? "Upgrading" : "Downgrading"} to {targetLabel}
               </div>
 
-              {/* Answered first because it is the question everybody actually has. */}
-              <p className="mt-1.5 text-muted-foreground">
-                Nothing to pay today. Your access changes straight away.
-              </p>
-
-              <div className="mt-3.5 space-y-1 border-t pt-3">
-                <Row
-                  label={`${targetLabel}, one ${sub.interval}`}
-                  value={money(preview.nextAmount, preview.currency)}
-                />
-
-                {preview.prorationAmount !== 0 && (
-                  <Row
-                    label="Rest of this month"
-                    value={`${preview.prorationAmount > 0 ? "+" : "−"}${money(
-                      Math.abs(preview.prorationAmount),
-                      preview.currency
-                    )}`}
-                    tone={preview.prorationAmount > 0 ? "default" : "success"}
-                  />
-                )}
-
-                {/* Only when there is one. A "$0" row on every change is noise, and it makes
-                    the real thing easy to miss when it does appear. */}
-                {preview.creditApplied > 0 && (
-                  <Row
-                    label="Account credit"
-                    value={`−${money(preview.creditApplied, preview.currency)}`}
-                    tone="success"
-                  />
-                )}
-              </div>
-
-              {/* The total, big, at the bottom — the one number anyone is really looking for.
-                  The date sits with it rather than in a heading above the list, because "how
-                  much" and "when" are the same question and reading them apart is what made
-                  the old layout hard to follow. */}
-              <div className="mt-3 flex items-end justify-between gap-4 border-t pt-3">
-                <div>
-                  <div className="font-medium">Total</div>
-                  <div className="text-xs text-muted-foreground">
-                    due {date(preview.nextBillDate)}
+              {preview.upgrading ? (
+                <>
+                  <div className="mt-3 space-y-1 border-t pt-3">
+                    <Row
+                      label={`${targetLabel} for the rest of this ${sub.interval}`}
+                      value={money(preview.prorationAmount, preview.currency)}
+                    />
+                    {preview.creditApplied > 0 && (
+                      <Row
+                        label="Account credit"
+                        value={`−${money(preview.creditApplied, preview.currency)}`}
+                        tone="success"
+                      />
+                    )}
                   </div>
-                </div>
-                <div className="text-3xl font-semibold tabular-nums">
-                  {money(preview.nextBillTotal, preview.currency)}
-                </div>
-              </div>
 
-              <p className="mt-2 text-xs text-muted-foreground">
-                Then {money(preview.nextAmount, preview.currency)} every {sub.interval}.
-              </p>
+                  <div className="mt-3 flex items-end justify-between gap-4 border-t pt-3">
+                    <div>
+                      <div className="font-medium">Charged now</div>
+                      <div className="text-xs text-muted-foreground">
+                        {preview.dueNow === 0 ? "covered by your credit" : "on your card"}
+                      </div>
+                    </div>
+                    <div className="text-3xl font-semibold tabular-nums">
+                      {money(preview.dueNow, preview.currency)}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-3 space-y-1 border-t pt-3">
+                    <Row
+                      label="Unused time on your current plan"
+                      value={`+${money(preview.creditBack, preview.currency)}`}
+                      tone="success"
+                    />
+                  </div>
 
-              {/* When the credit is bigger than the bill, the rows above sum to less than zero
-                  while the total floors at zero. Say where the difference went — an
-                  unexplained gap in a column of figures is what makes a bill feel wrong. */}
-              {preview.nextAmount + preview.prorationAmount - preview.creditApplied < 0 && (
-                <p className="mt-1 text-xs text-success">
-                  Your credit covers this.{" "}
-                  {money(
-                    preview.creditApplied - preview.nextAmount - preview.prorationAmount,
-                    preview.currency
-                  )}{" "}
-                  carries over.
-                </p>
+                  <div className="mt-3 flex items-end justify-between gap-4 border-t pt-3">
+                    <div>
+                      <div className="font-medium">Credit back</div>
+                      <div className="text-xs text-muted-foreground">
+                        comes off your next bill
+                      </div>
+                    </div>
+                    <div className="text-3xl font-semibold tabular-nums text-success">
+                      {money(preview.creditBack, preview.currency)}
+                    </div>
+                  </div>
+                </>
               )}
+
+              <p className="mt-2.5 border-t pt-2.5 text-xs text-muted-foreground">
+                Then {money(preview.nextBillTotal, preview.currency)} on{" "}
+                {date(preview.nextBillDate)}
+                {preview.nextBillTotal !== preview.nextAmount &&
+                  ` (credit applied), ${money(preview.nextAmount, preview.currency)} every ${sub.interval} after`}
+                {preview.nextBillTotal === preview.nextAmount &&
+                  `, and every ${sub.interval} after`}
+                . Your access changes straight away.
+              </p>
             </div>
           )}
         </div>
