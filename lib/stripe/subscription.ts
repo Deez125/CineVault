@@ -46,8 +46,33 @@ export type SubscriptionDetail = {
    * quotes the full price reads as though the reward never happened.
    */
   creditBalance: number;
+  credit: CreditBreakdown;
   paymentMethod: PaymentMethodSummary | null;
   invoices: InvoiceSummary[];
+};
+
+/**
+ * Where somebody's credit came from, and how much of it is left.
+ *
+ * A necessary honesty about this: Stripe keeps ONE balance per customer. Credit granted for a
+ * referral and credit from a downgrade go into the same pot, and when an invoice consumes
+ * some of it there is no record of which source paid. So "you have $8 of referral credit" is
+ * not a question with a true answer once any of it has been spent.
+ *
+ * What is true, and what these numbers are: how much has ever been granted from each source,
+ * how much has been spent in total, and what remains. Those reconcile exactly, and when
+ * nothing has been spent yet — the common case — the sources simply add up to the balance.
+ */
+export type CreditBreakdown = {
+  /** Granted for referring people, less anything clawed back. */
+  fromReferrals: number;
+  /** Everything else: downgrades, goodwill adjustments, refunds to the account. */
+  fromAdjustments: number;
+  /** Already consumed by past invoices. */
+  used: number;
+  /** What is left and spendable right now. Equals the Stripe balance. */
+  available: number;
+  currency: string;
 };
 
 /**
@@ -86,6 +111,7 @@ export async function getSubscriptionDetail(user: User): Promise<SubscriptionDet
   // is settled on the invoice and is not this card's job to explain.
   const customer = await stripe.customers.retrieve(user.stripeCustomerId);
   const creditBalance = customer.deleted ? 0 : Math.max(0, -customer.balance);
+  const credit = await creditBreakdown(user.stripeCustomerId, creditBalance, price.currency);
 
   return {
     id: subscription.id,
@@ -98,9 +124,64 @@ export async function getSubscriptionDetail(user: User): Promise<SubscriptionDet
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     currentPeriodEnd: periodEnd(subscription)?.toISOString() ?? null,
     creditBalance,
+    credit,
     paymentMethod: await resolvePaymentMethod(subscription, user.stripeCustomerId),
     invoices: await listInvoices(user.stripeCustomerId),
   };
+}
+
+/**
+ * Add up a customer's balance history by source.
+ *
+ * Sign convention, and it is the opposite of what you would guess: Stripe's balance is what
+ * the customer OWES, so GRANTING credit is a NEGATIVE transaction and SPENDING it is a
+ * positive one. Getting this backwards produces numbers that look plausible and are exactly
+ * inverted.
+ *
+ * Referral transactions carry metadata.kind, stamped by lib/referrals.ts. Everything else —
+ * downgrade prorations, invoices consuming credit, anything done by hand in the dashboard —
+ * is classified by whether it added or removed credit.
+ */
+async function creditBreakdown(
+  customerId: string,
+  available: number,
+  currency: string
+): Promise<CreditBreakdown> {
+  try {
+    const txs = await stripe.customers
+      .listBalanceTransactions(customerId, { limit: 100 })
+      .autoPagingToArray({ limit: 500 });
+
+    let fromReferrals = 0;
+    let fromAdjustments = 0;
+    let used = 0;
+
+    for (const tx of txs) {
+      const isReferral = tx.metadata?.kind === "referral";
+
+      if (isReferral) {
+        // Net, so a clawback subtracts from what referrals have earned rather than counting
+        // as somebody having spent it.
+        fromReferrals += -tx.amount;
+        continue;
+      }
+
+      if (tx.amount < 0) fromAdjustments += -tx.amount;
+      else used += tx.amount;
+    }
+
+    return {
+      fromReferrals: Math.max(0, fromReferrals),
+      fromAdjustments,
+      used,
+      available,
+      currency,
+    };
+  } catch {
+    // Never let this break the billing page. The balance itself is known and correct; only
+    // the breakdown is missing.
+    return { fromReferrals: 0, fromAdjustments: 0, used: 0, available, currency };
+  }
 }
 
 export type ProrationPreview = {

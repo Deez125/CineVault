@@ -68,6 +68,16 @@ export const DEAD_LINK_RETENTION_DAYS = 30;
 export const REFERRAL_COUPON_ID = "cinevault-referral-first-month";
 
 /**
+ * Stamped on every balance transaction this file creates, so the billing page can say which
+ * part of somebody's credit came from referring people.
+ *
+ * Stripe keeps one balance per customer with no notion of where the money came from, and the
+ * transaction descriptions are free text nobody should be parsing. Metadata is the only
+ * durable way to ask the question later.
+ */
+export const CREDIT_KIND = { kind: "referral" } as const;
+
+/**
  * Code alphabet.
  *
  * No O/0, I/1/L. Even though these are only ever handed out inside a link, they are shown on
@@ -425,6 +435,7 @@ export async function rewardForFirstPayment(
       amount: -REFERRAL_REWARD,
       currency: REFERRAL_CURRENCY,
       description: `Referral credit — ${referral.refereeEmail}`,
+      metadata: CREDIT_KIND,
     });
 
     await db
@@ -534,6 +545,7 @@ export async function reverseReward(
       amount,
       currency: referral.rewardCurrency ?? REFERRAL_CURRENCY,
       description: `Referral credit reversed (${reason}) — ${referral.refereeEmail}`,
+      metadata: CREDIT_KIND,
     });
 
     await db
@@ -602,6 +614,7 @@ export async function restoreReward(paymentIntentId: string): Promise<boolean> {
       amount: -amount,
       currency: referral.rewardCurrency ?? REFERRAL_CURRENCY,
       description: `Referral credit restored — ${referral.refereeEmail}`,
+      metadata: CREDIT_KIND,
     });
 
     await db

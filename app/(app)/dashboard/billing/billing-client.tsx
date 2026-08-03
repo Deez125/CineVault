@@ -185,23 +185,6 @@ export function BillingClient({
           )}
         </div>
 
-        {sub.creditBalance > 0 && (
-          <div className="flex items-center gap-2 border-t px-5 py-3.5 text-sm">
-            <Gift className="size-4 shrink-0 text-success" />
-            <span>
-              <span className="font-medium text-success">
-                {money(sub.creditBalance, sub.currency)} credit
-              </span>
-              <span className="text-muted-foreground">
-                {" "}
-                on your account
-                {sub.creditBalance > sub.amount
-                  ? " — covers your next bill, and the rest rolls over."
-                  : " — comes off your next bill automatically."}
-              </span>
-            </span>
-          </div>
-        )}
 
         {sub.cancelAtPeriodEnd && (
           <div className="border-t p-5">
@@ -223,6 +206,79 @@ export function BillingClient({
           </div>
         )}
       </section>
+
+      {/* ── Credit ─────────────────────────────────────────────────────────── */}
+      {(sub.credit.available > 0 ||
+        sub.credit.fromReferrals > 0 ||
+        sub.credit.fromAdjustments > 0) && (
+        <section className="rounded-xl border bg-card">
+          <div className="flex items-end justify-between gap-4 p-5">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Account credit
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {sub.credit.available > 0
+                  ? "Comes off your next bill automatically"
+                  : "Nothing available right now"}
+              </div>
+            </div>
+            <div
+              className={`text-3xl font-semibold tabular-nums ${
+                sub.credit.available > 0 ? "text-success" : "text-muted-foreground"
+              }`}
+            >
+              {money(sub.credit.available, sub.credit.currency)}
+            </div>
+          </div>
+
+          {/* Where it came from. Only the lines that have a number — a column of zeroes
+              tells nobody anything. */}
+          <div className="space-y-1 border-t px-5 py-3.5 text-sm">
+            {sub.credit.fromReferrals > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Gift className="size-3.5 text-success" />
+                  Referral rewards
+                </span>
+                <span className="tabular-nums">
+                  {money(sub.credit.fromReferrals, sub.credit.currency)}
+                </span>
+              </div>
+            )}
+
+            {sub.credit.fromAdjustments > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Refunds and plan changes</span>
+                <span className="tabular-nums">
+                  {money(sub.credit.fromAdjustments, sub.credit.currency)}
+                </span>
+              </div>
+            )}
+
+            {sub.credit.used > 0 && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Used on past bills</span>
+                <span className="tabular-nums">
+                  −{money(sub.credit.used, sub.credit.currency)}
+                </span>
+              </div>
+            )}
+
+            <div className="flex justify-between gap-4 border-t pt-1.5 font-medium">
+              <span>Available now</span>
+              <span className="tabular-nums">
+                {money(sub.credit.available, sub.credit.currency)}
+              </span>
+            </div>
+          </div>
+
+          <p className="border-t px-5 py-3 text-xs text-muted-foreground">
+            Credit is spent automatically — on your next bill, and on any upgrade you make
+            before then. There is nothing to redeem.
+          </p>
+        </section>
+      )}
 
       {/* ── Card ───────────────────────────────────────────────────────────── */}
       <section className="flex items-center justify-between gap-4 rounded-xl border bg-card p-5">
