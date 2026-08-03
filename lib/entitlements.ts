@@ -31,9 +31,15 @@ export type ApplyOptions = {
   /**
    * The subscription to judge by. When omitted, it is fetched from Stripe.
    *
-   * The webhook passes the object it was handed; the reconciler passes what it listed. Both
-   * beat re-fetching, and the reconciler in particular would otherwise make one API call per
-   * member every five minutes.
+   * ONLY pass this when you have JUST read it. The reconciler does — it lists every
+   * subscription up front and would otherwise make one API call per member every five
+   * minutes — and what it passes is seconds old.
+   *
+   * The webhook deliberately does NOT, even though it is handed a subscription object for
+   * free. That object is a snapshot from when the event was emitted, and Stripe does not
+   * guarantee delivery order, so an out-of-order `created` can carry a stale `incomplete`
+   * status that revokes a live member. Anything holding an object of unknown age should omit
+   * this and let it be re-read.
    */
   subscription?: Stripe.Subscription | null;
   actor?: Actor;

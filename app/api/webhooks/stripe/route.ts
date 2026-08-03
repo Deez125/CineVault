@@ -108,13 +108,21 @@ async function handle(event: Stripe.Event): Promise<void> {
         return;
       }
 
-      // A deleted subscription must not be judged as though it were live. Passing null makes
-      // applyEntitlement look for another live one, which is right: cancelling a downgrade
-      // attempt should not revoke someone who still has a good subscription.
-      await applyEntitlement(user.id, {
-        subscription: event.type === "customer.subscription.deleted" ? null : subscription,
-        actor: "webhook",
-      });
+      // DELIBERATELY does not pass `subscription`, so applyEntitlement re-reads from Stripe.
+      //
+      // The object inside an event is a snapshot of how things looked when it was emitted,
+      // and **Stripe does not guarantee event ordering**. Checkout emits `created` with
+      // status `incomplete` and `updated` with `active` moments apart; if they arrive the
+      // other way round — which happens on retries, and on its own under load — judging by
+      // the snapshot writes `incomplete` over a live subscription and revokes a paying
+      // member. The reconciler heals it within five minutes, but five minutes is a stream
+      // stopping mid-episode for no reason anybody can see.
+      //
+      // Re-reading costs one API call per event and makes ordering irrelevant: whatever
+      // order they arrive in, every one of them asks Stripe what is true NOW and reaches the
+      // same answer. It also covers `deleted` correctly, since pickEntitling looks for a
+      // subscription that still entitles and finds none.
+      await applyEntitlement(user.id, { actor: "webhook" });
       return;
     }
 
