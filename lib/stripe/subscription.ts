@@ -1,6 +1,6 @@
 import type Stripe from "stripe";
 import { stripe, isEntitling } from "./client";
-import { streamsForPrice } from "./tiers";
+import { getTiers, streamsForPrice } from "./tiers";
 import { pickEntitling } from "@/lib/entitlements";
 import type { User } from "@/lib/db/schema";
 
@@ -73,6 +73,25 @@ export type CreditBreakdown = {
   /** What is left and spendable right now. Equals the Stripe balance. */
   available: number;
   currency: string;
+  /** Every movement, newest first. The summary above is these added up. */
+  history: CreditEntry[];
+};
+
+/** One line of the credit ledger. */
+export type CreditEntry = {
+  id: string;
+  at: string;
+  /**
+   * POSITIVE means credit went IN, negative means it was spent — the opposite of Stripe's
+   * own sign, which tracks what the customer owes. Flipped here rather than in the component
+   * so nothing downstream has to remember which way round it is.
+   */
+  amount: number;
+  kind: "referral" | "plan_change" | "adjustment";
+  /** "Downgraded from 2 Users to 1 User", "Referral credit — j••••@gmail.com". */
+  label: string;
+  /** Credit available immediately after this movement. */
+  balanceAfter: number;
 };
 
 /**
@@ -156,6 +175,27 @@ async function creditBreakdown(
     let fromAdjustments = 0;
     let used = 0;
 
+    // Invoice ids on the transactions, resolved once each. A member who flips between plans
+    // a few times generates several movements against the SAME invoice, and fetching per
+    // transaction would repeat the call for no reason.
+    const invoiceIds = [
+      ...new Set(
+        txs
+          .map((t) => (typeof t.invoice === "string" ? t.invoice : t.invoice?.id))
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+
+    const described = new Map<string, string>();
+    await Promise.all(
+      invoiceIds.map(async (id) => {
+        const label = await describeInvoice(id);
+        if (label) described.set(id, label);
+      })
+    );
+
+    const history: CreditEntry[] = [];
+
     for (const tx of txs) {
       // Metadata first, description second.
       //
@@ -168,6 +208,22 @@ async function creditBreakdown(
       // wrote ourselves, and new transactions never reach it.
       const isReferral =
         tx.metadata?.kind === "referral" || /^referral credit/i.test(tx.description ?? "");
+
+      const invoiceId = typeof tx.invoice === "string" ? tx.invoice : tx.invoice?.id;
+      const planChange = invoiceId ? described.get(invoiceId) : undefined;
+
+      history.push({
+        id: tx.id,
+        at: new Date(tx.created * 1000).toISOString(),
+        amount: -tx.amount,
+        kind: isReferral ? "referral" : planChange ? "plan_change" : "adjustment",
+        label: isReferral
+          ? maskEmails(tx.description ?? "Referral credit")
+          : (planChange ??
+            tx.description ??
+            (tx.amount < 0 ? "Credit added" : "Applied to your bill")),
+        balanceAfter: Math.max(0, -tx.ending_balance),
+      });
 
       if (isReferral) {
         // Net, so a clawback subtracts from what referrals have earned rather than counting
@@ -186,12 +242,55 @@ async function creditBreakdown(
       used,
       available,
       currency,
+      history,
     };
   } catch {
     // Never let this break the billing page. The balance itself is known and correct; only
     // the breakdown is missing.
-    return { fromReferrals: 0, fromAdjustments: 0, used: 0, available, currency };
+    return { fromReferrals: 0, fromAdjustments: 0, used: 0, available, currency, history: [] };
   }
+}
+
+/**
+ * Turn a proration invoice into a sentence.
+ *
+ * A subscription_update invoice carries exactly two lines: a NEGATIVE one crediting the plan
+ * being left, and a POSITIVE one charging the plan being joined. Their price ids identify both
+ * ends, so the tier names come from our own catalogue rather than from Stripe's generated
+ * line descriptions — which read "Unused time on 2 Users after 03 Aug 2026" and would have to
+ * be parsed, and would break the day Stripe rewords them.
+ */
+async function describeInvoice(invoiceId: string): Promise<string | null> {
+  try {
+    const invoice = await stripe.invoices.retrieve(invoiceId);
+    if (invoice.billing_reason !== "subscription_update") return null;
+
+    const priceOf = (line: Stripe.InvoiceLineItem) =>
+      (line as { pricing?: { price_details?: { price?: string } } }).pricing?.price_details
+        ?.price;
+
+    const from = invoice.lines.data.find((l) => l.amount < 0);
+    const to = invoice.lines.data.find((l) => l.amount > 0);
+
+    const fromId = from && priceOf(from);
+    const toId = to && priceOf(to);
+    if (!fromId || !toId) return null;
+
+    const tiers = await getTiers();
+    const fromTier = tiers.find((t) => t.priceId === fromId);
+    const toTier = tiers.find((t) => t.priceId === toId);
+    if (!fromTier || !toTier) return null;
+
+    const verb = toTier.amount > fromTier.amount ? "Upgraded" : "Downgraded";
+    return `${verb} from ${fromTier.label} to ${toTier.label}`;
+  } catch {
+    return null;
+  }
+}
+
+/** j••••@gmail.com. The ledger is on screen; a friend's address does not need to be. */
+function maskEmails(text: string): string {
+  return text.replace(/([\w.+-])[\w.+-]*(@[\w.-]+)/g, (_, first, domain) => `${first}••••${domain}`);
 }
 
 export type ProrationPreview = {

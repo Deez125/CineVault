@@ -7,6 +7,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import {
   ArrowDown,
+  ArrowUpDown,
   ArrowUp,
   CalendarDays,
   CreditCard,
@@ -34,7 +35,11 @@ import {
 import { PlanPicker } from "@/components/app/plan-picker";
 import { stripeAppearance } from "@/lib/stripe/appearance";
 import type { Tier } from "@/lib/stripe/tiers";
-import type { ProrationPreview, SubscriptionDetail } from "@/lib/stripe/subscription";
+import type {
+  CreditBreakdown,
+  ProrationPreview,
+  SubscriptionDetail,
+} from "@/lib/stripe/subscription";
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
 
@@ -62,6 +67,7 @@ export function BillingClient({
   const [changing, setChanging] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [updatingCard, setUpdatingCard] = useState(false);
+  const [showingCredit, setShowingCredit] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -270,10 +276,21 @@ export function BillingClient({
             </div>
           </div>
 
-          <p className="border-t px-5 py-3 text-xs text-muted-foreground">
-            Spent automatically — on your next bill, and on any upgrade you make before then.
-            There is nothing to redeem.
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t px-5 py-3">
+            <p className="text-xs text-muted-foreground">
+              Spent automatically — on your next bill, and on any upgrade you make before
+              then. There is nothing to redeem.
+            </p>
+            {sub.credit.history.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowingCredit(true)}
+                className="shrink-0 text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+              >
+                See credit history
+              </button>
+            )}
+          </div>
         </section>
 
       {/* ── Card ───────────────────────────────────────────────────────────── */}
@@ -362,6 +379,12 @@ export function BillingClient({
           setCancelling(true);
         }}
         busy={busy}
+      />
+
+      <CreditHistoryDialog
+        open={showingCredit}
+        onOpenChange={setShowingCredit}
+        credit={sub.credit}
       />
 
       <CancelDialog
@@ -869,5 +892,80 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span className={`tabular-nums ${tone === "success" ? "text-success" : ""}`}>{value}</span>
     </div>
+  );
+}
+
+/**
+ * Every movement of credit, newest first.
+ *
+ * Behind a dialog rather than on the page: the summary answers "how much have I got", which
+ * is what almost everybody wants, and this answers "where did that come from", which is what
+ * you want on the one day the number surprises you.
+ *
+ * Each row carries the balance AFTER it, so the column can be read downward and checked
+ * against the total instead of taken on trust.
+ */
+function CreditHistoryDialog({
+  open,
+  onOpenChange,
+  credit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  credit: CreditBreakdown;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Credit history</DialogTitle>
+          <DialogDescription>
+            Everything that has been added to or taken from your credit.
+          </DialogDescription>
+        </DialogHeader>
+
+        <ul className="-mx-1 max-h-[22rem] divide-y overflow-y-auto">
+          {credit.history.map((entry) => (
+            <li key={entry.id} className="flex items-start gap-3 px-1 py-3">
+              <span className="mt-0.5 shrink-0">
+                {entry.kind === "referral" ? (
+                  <Gift className="size-4 text-success" />
+                ) : entry.kind === "plan_change" ? (
+                  <ArrowUpDown className="size-4 text-muted-foreground" />
+                ) : (
+                  <User className="size-4 text-muted-foreground" />
+                )}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <div className="text-sm">{entry.label}</div>
+                <div className="text-xs text-muted-foreground">
+                  {date(entry.at)} · {money(entry.balanceAfter, credit.currency)} left
+                </div>
+              </div>
+
+              <span
+                className={`shrink-0 text-sm tabular-nums ${
+                  entry.amount > 0 ? "text-success" : "text-muted-foreground"
+                }`}
+              >
+                {entry.amount > 0 ? "+" : "−"}
+                {money(Math.abs(entry.amount), credit.currency)}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <DialogFooter>
+          <div className="mr-auto text-sm">
+            <span className="text-muted-foreground">Total credit </span>
+            <span className="font-medium tabular-nums text-success">
+              {money(credit.available, credit.currency)}
+            </span>
+          </div>
+          <DialogClose render={<Button variant="secondary" size="lg">Close</Button>} />
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
