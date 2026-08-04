@@ -735,3 +735,14 @@ export async function getSummary(user: Pick<User, "id">): Promise<ReferralSummar
 }
 
 export type { Referral };
+
+/** Has this member ever created an invite? Drives the "there is something here" dot. */
+export async function hasAnyInvite(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: referralLinks.id })
+    .from(referralLinks)
+    .where(eq(referralLinks.ownerId, userId))
+    .limit(1);
+
+  return Boolean(row);
+}

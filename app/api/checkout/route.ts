@@ -2,6 +2,7 @@ import { z } from "zod";
 import { apiUser } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { AlreadySubscribedError, BannedError, startCheckout } from "@/lib/stripe/checkout";
+import { applyEntitlement } from "@/lib/entitlements";
 import { tierForPrice } from "@/lib/stripe/tiers";
 import { logError } from "@/lib/events";
 
@@ -34,8 +35,25 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "not signed in" }, { status: 401 });
 
+  // An admin already has everything a plan buys, for free. Taking their money for it would
+  // be a bug that charges somebody, which is the worst kind.
+  if (user.isAdmin) {
+    return Response.json(
+      { error: "Admin accounts already have full access. There's nothing to buy." },
+      { status: 409 }
+    );
+  }
+
   try {
     const intent = await startCheckout(user, tier.priceId);
+
+    // When credit covered the whole first invoice there is no card step and no status poll
+    // afterwards, so this is the only chance to settle entitlement without waiting on the
+    // webhook. Recognised by there being no secret to confirm.
+    if (!intent.clientSecret) {
+      await applyEntitlement(user.id, { actor: "user" }).catch(() => null);
+    }
+
     return Response.json(intent);
   } catch (err) {
     if (err instanceof AlreadySubscribedError) {

@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/app/page-header";
 import { InviteList } from "@/components/app/invite-list";
 import { StatCard } from "@/components/app/stat-card";
-import { requireUser } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { formatMoney } from "@/lib/money";
+import { markNavSeen } from "@/lib/nav-seen";
 import {
   LINK_LIFETIME_DAYS,
   MONTHLY_LINK_CAP,
@@ -16,7 +17,11 @@ import {
 export const metadata: Metadata = { title: "Referrals" };
 
 export default async function ReferralsPage() {
-  const user = await requireUser("/dashboard/referrals");
+  const user = await requireMember();
+
+  // Opening the section clears its dot. Done on the SERVER so it sticks without
+  // JavaScript and however they arrived — a bookmark, browser back, a link elsewhere.
+  await markNavSeen("/dashboard/referrals");
   const summary = await getSummary(user);
 
   return (

@@ -274,21 +274,44 @@ export async function getSharedLibraries(): Promise<PlexSection[]> {
 // Sharing
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type SharedServer = { id: number; username: string | null; email: string | null };
+export type SharedServer = {
+  id: number;
+  username: string | null;
+  email: string | null;
+  /**
+   * When they accepted the invite, or null while it is still outstanding.
+   *
+   * Plex reports a pending invite as either acceptedAt="0" or the attribute missing
+   * altogether, so BOTH are read as "not accepted". Measured against the live server, all 16
+   * existing shares carry a real timestamp — there was no pending invite to observe — so the
+   * unaccepted shape is handled defensively rather than from evidence.
+   */
+  acceptedAt: Date | null;
+};
 
 /** Everyone the server is currently shared with. */
 export async function listShares(): Promise<SharedServer[]> {
   const parsed = await plexXml<{
     MediaContainer?: {
-      SharedServer?: Array<{ id: string; username?: string; email?: string }>;
+      SharedServer?: Array<{
+        id: string;
+        username?: string;
+        email?: string;
+        acceptedAt?: string;
+      }>;
     };
   }>(`/api/servers/${env.PLEX_MACHINE_ID}/shared_servers`);
 
-  return (parsed.MediaContainer?.SharedServer ?? []).map((s) => ({
-    id: Number(s.id),
-    username: s.username ?? null,
-    email: s.email ?? null,
-  }));
+  return (parsed.MediaContainer?.SharedServer ?? []).map((s) => {
+    const seconds = Number(s.acceptedAt);
+    return {
+      id: Number(s.id),
+      username: s.username ?? null,
+      email: s.email ?? null,
+      // Unix seconds. Zero, missing and unparseable all mean "still waiting".
+      acceptedAt: Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : null,
+    };
+  });
 }
 
 /**

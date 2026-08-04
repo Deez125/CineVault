@@ -29,7 +29,20 @@ const hash = (token: string) => crypto.createHash("sha256").update(token).digest
 
 export type SessionUser = Pick<
   User,
-  "id" | "email" | "firstName" | "lastName" | "username" | "isAdmin" | "banned" | "emailVerifiedAt"
+  | "id"
+  | "email"
+  | "firstName"
+  | "lastName"
+  | "username"
+  | "isAdmin"
+  | "banned"
+  | "emailVerifiedAt"
+  // Carried on the session so guards and the sidebar can ask "have they paid?" without a
+  // second query on every request. Written only by applyEntitlement; read-only everywhere else.
+  | "isMember"
+  | "streamLimit"
+  | "plexUserId"
+  | "navSeen"
 >;
 
 /**
@@ -89,6 +102,10 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       isAdmin: users.isAdmin,
       banned: users.banned,
       emailVerifiedAt: users.emailVerifiedAt,
+      isMember: users.isMember,
+      streamLimit: users.streamLimit,
+      plexUserId: users.plexUserId,
+      navSeen: users.navSeen,
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
@@ -138,6 +155,10 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     isAdmin,
     banned: row.banned,
     emailVerifiedAt: row.emailVerifiedAt,
+    isMember: row.isMember,
+    streamLimit: row.streamLimit,
+    plexUserId: row.plexUserId,
+    navSeen: row.navSeen,
   };
 }
 

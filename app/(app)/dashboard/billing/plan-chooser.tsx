@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Users } from "lucide-react";
+import { Check, MonitorPlay } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CheckoutDialog } from "./checkout-dialog";
 import { cn } from "@/lib/utils";
 import type { Tier } from "@/lib/stripe/tiers";
+
+const INCLUDED = ["The full library", "Change or cancel any time", "Card handled by Stripe"];
 
 const money = (minor: number, currency = "usd") =>
   new Intl.NumberFormat("en-US", {
@@ -45,10 +47,11 @@ export function PlanChooser({ tiers, preselect }: { tiers: Tier[]; preselect?: s
   return (
     <>
       <div className="rounded-xl border bg-card p-6">
-        <h2 className="text-base font-semibold">How many people will be watching?</h2>
+        <h2 className="text-base font-semibold">How many streams at once?</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          This is how many streams can run at the same time. You can change it whenever you
-          like, and the difference is prorated.
+          How many things can play at the same time. Not how many Plex accounts — one account,
+          this many simultaneous streams. Change it whenever you like; the difference is
+          prorated.
         </p>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -79,14 +82,14 @@ export function PlanChooser({ tiers, preselect }: { tiers: Tier[]; preselect?: s
                   {active && <Check className="size-2.5" />}
                 </span>
 
-                <span className="flex items-center gap-1.5 text-sm font-medium">
-                  <Users
+                <span className="flex items-center gap-1.5 pr-6 text-sm font-medium">
+                  <MonitorPlay
                     className={cn(
-                      "size-4",
+                      "size-4 shrink-0",
                       active ? "text-primary" : "text-muted-foreground"
                     )}
                   />
-                  {t.streams} user{t.streams === 1 ? "" : "s"}
+                  {t.streams} stream{t.streams === 1 ? "" : "s"}
                 </span>
 
                 <span className="mt-3 flex items-baseline gap-1">
@@ -96,9 +99,20 @@ export function PlanChooser({ tiers, preselect }: { tiers: Tier[]; preselect?: s
                   <span className="text-xs text-muted-foreground">/{t.interval}</span>
                 </span>
 
-                {/* Full sentence, its own line, no truncation. */}
-                <span className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  {t.blurb}
+                {/* The same three lines on every card, under the price.
+                    They are identical across tiers on purpose — the point is that the ONLY
+                    difference between plans is the stream count, and a column of matching
+                    ticks says that faster than a sentence would. The per-tier descriptions
+                    used to sit here, and being different lengths they made the four cards
+                    different heights, which read as though the plans differed in more than
+                    the number. */}
+                <span className="mt-4 space-y-1.5 border-t pt-3">
+                  {INCLUDED.map((line) => (
+                    <span key={line} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Check className="size-3 shrink-0 text-success" />
+                      {line}
+                    </span>
+                  ))}
                 </span>
               </button>
             );
@@ -129,18 +143,6 @@ export function PlanChooser({ tiers, preselect }: { tiers: Tier[]; preselect?: s
         </div>
       </div>
 
-      <ul className="mt-5 grid gap-2 text-sm text-muted-foreground sm:grid-cols-3">
-        {[
-          "The full library, every plan",
-          "Change or cancel any time",
-          "Card handled by Stripe",
-        ].map((line) => (
-          <li key={line} className="flex items-center gap-2">
-            <Check className="size-4 shrink-0 text-success" />
-            {line}
-          </li>
-        ))}
-      </ul>
 
       {tier && (
         <CheckoutDialog

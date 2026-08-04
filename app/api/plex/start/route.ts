@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { apiMember } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { env } from "@/lib/env";
 import { logError } from "@/lib/events";
@@ -13,6 +14,9 @@ import { rateLimit } from "@/lib/rate-limit";
  * own hosted sign-in. They come back to /api/plex/callback.
  */
 export async function GET() {
+  const member = await apiMember();
+  if (!member.ok) return member.response;
+
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/dashboard/plex");
 

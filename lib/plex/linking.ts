@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { users, type User } from "@/lib/db/schema";
 import { applyEntitlement } from "@/lib/entitlements";
 import { logEvent } from "@/lib/events";
-import { plexConfigured } from "@/lib/env";
+import { adminEmails, plexConfigured } from "@/lib/env";
 import { authUrl, checkPin, createPin, type PlexIdentity } from "./client";
 import { isProtected } from "./protected";
 import { revokePlexAccess } from "./share";
@@ -120,7 +120,14 @@ async function assertLinkable(user: User, identity: PlexIdentity): Promise<void>
   // A protected account predates this system and is shared with directly. Attaching one to a
   // subscription would put it under this system's control, and the first cancellation would
   // revoke access that was never ours to revoke.
-  if (isProtected(identity.username)) {
+  //
+  // That risk does not exist for an ADMIN, and the server owner's own account is protected by
+  // definition — so without this exception the person who runs the service is the one person
+  // who cannot link their Plex account. syncPlexShare returns early for admins, so nothing is
+  // ever shared or unshared on their behalf: the link is identity and only identity, which is
+  // what lets the enforcer attribute streams to them and skip them deliberately rather than
+  // by not recognising them.
+  if (isProtected(identity.username) && !adminEmails().includes(user.email.toLowerCase())) {
     throw new PlexLinkError(
       `That Plex account already has direct access to the server and can't be linked here.`
     );
@@ -140,7 +147,14 @@ export async function unlink(user: User): Promise<void> {
 
   // Pull the share FIRST. Clearing the identity first would leave us with a share we can no
   // longer name, and it would sit on the server forever.
-  if (user.shareState === "invited" && !isProtected(previous)) {
+  //
+  // Attempted whenever we know who they are on Plex, NOT only when share_state says
+  // "invited". That column is our record of what we believe, and unlinking is exactly the
+  // moment it might be wrong — a share created by hand, or one left behind by an earlier
+  // failure, would otherwise survive with nothing left in the database naming it. `unshare`
+  // treats "no such share" as success, so the extra attempt costs one API call and closes the
+  // only case where access outlives the account.
+  if (previous && !isProtected(previous)) {
     try {
       await revokePlexAccess(user);
     } catch (err) {

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/app/page-header";
 import { TicketList } from "@/components/app/ticket-list";
 import { listAllTickets, type InboxFilter } from "@/lib/tickets";
+import { markNavSeen } from "@/lib/nav-seen";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Support inbox" };
@@ -18,6 +19,10 @@ export default async function AdminSupportPage({
 }: {
   searchParams: Promise<{ filter?: string }>;
 }) {
+  // Opening the inbox clears its dot. Done on the SERVER so it sticks without JavaScript
+  // and however they arrived. The admin gate itself is the layout's job.
+  await markNavSeen("/admin/support");
+
   const params = await searchParams;
   const filter = (FILTERS.find((f) => f.value === params.filter)?.value ?? "open") as InboxFilter;
 

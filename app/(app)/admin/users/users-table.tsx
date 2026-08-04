@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import type { UserListItem } from "@/lib/admin";
 import { displayName } from "@/lib/display-name";
+import { formatStreamLimit } from "@/lib/plans";
 
 const money = (minor: number | null, currency: string | null) =>
   minor == null
@@ -114,7 +115,7 @@ export function UsersTable({ users, selfId }: { users: UserListItem[]; selfId: s
                   {user.isMember ? (
                     <>
                       <div>
-                        {user.streamLimit} user{user.streamLimit === 1 ? "" : "s"}
+                        {formatStreamLimit(user.streamLimit)}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {money(user.subAmount, user.subCurrency)}

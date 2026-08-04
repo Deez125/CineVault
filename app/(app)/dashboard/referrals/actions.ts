@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { isMemberOrAdmin } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { LinkCapError, generateLink, revokeLink } from "@/lib/referrals";
 import { logEvent } from "@/lib/events";
@@ -17,7 +18,9 @@ export type ActionResult = { ok: true; code?: string } | { ok: false; error: str
 
 export async function generateLinkAction(): Promise<ActionResult> {
   const user = await getCurrentUser();
-  if (!user) return { ok: false, error: "Sign in to invite somebody." };
+  // Members only, same as the page. Inviting is something a plan buys, and a referrer with
+  // no Stripe customer cannot be credited when their invite pays out.
+  if (!user || !isMemberOrAdmin(user)) return { ok: false, error: "Not available." };
 
   try {
     const link = await generateLink(user.id);
@@ -41,7 +44,7 @@ export async function generateLinkAction(): Promise<ActionResult> {
 
 export async function revokeLinkAction(linkId: string): Promise<ActionResult> {
   const user = await getCurrentUser();
-  if (!user) return { ok: false, error: "Sign in first." };
+  if (!user || !isMemberOrAdmin(user)) return { ok: false, error: "Not available." };
 
   // Same message whether the link belongs to somebody else, was already used, or never
   // existed. Distinguishing them would turn this into a way to probe for valid link ids.

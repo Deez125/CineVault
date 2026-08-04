@@ -5,7 +5,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthForm } from "@/components/auth/auth-form";
-import { resetPasswordAction } from "@/lib/auth/actions";
+import { resetPasswordAction, tokenIsLive } from "@/lib/auth/actions";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
 
 export const metadata: Metadata = { title: "Set a new password" };
@@ -17,13 +17,19 @@ export default async function ResetPage({
 }) {
   const { token } = await searchParams;
 
-  if (!token) {
+  // Checked here, not only on submit. Otherwise a dead link opens a password form and objects
+  // afterwards, which reads as "the old link still works". Peeking does not spend the token —
+  // mail scanners fetch these before the recipient does.
+  const live = token ? await tokenIsLive(token, "reset_password") : false;
+
+  if (!live) {
     return (
       <>
         <Alert variant="destructive">
           <TriangleAlert />
           <AlertDescription>
-            This link is missing its token. Ask for a new reset email.
+            This link has expired, has already been used, or was replaced by a newer one. Ask
+            for a fresh reset email.
           </AlertDescription>
         </Alert>
         <p className="mt-6 text-center text-sm">

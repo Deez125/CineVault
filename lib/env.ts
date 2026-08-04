@@ -86,6 +86,53 @@ const schema = z.object({
     .default("false")
     .transform((v) => v === "true"),
 
+  /**
+   * Resend, for outbound email.
+   *
+   * Optional so development still runs without it — the console transport prints reset links
+   * to the terminal, which is more convenient than a real inbox. Production refuses to start
+   * without it (see assertEmailConfigured), because the failure mode otherwise is silent:
+   * password reset appears to work and quietly does nothing.
+   */
+  RESEND_API_KEY: z.string().optional(),
+
+  /**
+   * The From address. Must be on a domain verified in Resend, or every send is rejected.
+   *
+   * A display name is worth including — "CineVault <noreply@…>" reads as a service, a bare
+   * address reads as a script.
+   */
+  EMAIL_FROM: z.string().default("CineVault <noreply@getcinevault.com>"),
+
+  /**
+   * The logo shown in emails. An absolute, PUBLICLY reachable URL.
+   *
+   * Deliberately not built from APP_URL. An inbox is not a browser tab: Gmail fetches images
+   * through its own proxy, from Google's network, so a localhost URL is unreachable and the
+   * logo renders as a broken image in every message sent from a development machine. Pointing
+   * at production means the logo is right everywhere, including in local test sends.
+   *
+   * A data: URI would avoid the fetch entirely and is the obvious idea — Gmail blocks them.
+   */
+  EMAIL_LOGO_URL: z.string().url().default("https://getcinevault.com/logo.png"),
+
+  /**
+   * Whether the worker may actually terminate streams.
+   *
+   * OFF by default, and it stays off until somebody deliberately turns it on. Killing a
+   * stream is the most user-hostile thing this system can do, and the failure mode of a
+   * mistake is a paying customer's film stopping mid-scene. A deploy must never be able to
+   * start doing that on its own.
+   *
+   * With it off the enforcer still runs, still works out who is over their limit, and still
+   * logs what it WOULD have done — so the behaviour can be watched against real traffic
+   * before it is allowed to act.
+   */
+  ENFORCE_STREAM_LIMITS: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
   // ── Background loop tuning ────────────────────────────────────────────────
   RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60_000),
   ENFORCE_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),

@@ -1,4 +1,4 @@
-import { apiUser } from "@/lib/auth";
+import { apiUser, apiMember } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { logError } from "@/lib/events";
 import { PlexLinkError, unlink } from "@/lib/plex/linking";
@@ -6,6 +6,9 @@ import { PlexLinkError, unlink } from "@/lib/plex/linking";
 export async function POST() {
   const auth = await apiUser();
   if (!auth.ok) return auth.response;
+
+  const member = await apiMember();
+  if (!member.ok) return member.response;
 
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "not signed in" }, { status: 401 });

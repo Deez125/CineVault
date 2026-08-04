@@ -6,7 +6,8 @@ import { stripe, isEntitling } from "@/lib/stripe/client";
 import { streamsForPrice } from "@/lib/stripe/tiers";
 import { logEvent, logError, type Actor } from "@/lib/events";
 import { isProtected } from "@/lib/plex/protected";
-import { plexConfigured } from "@/lib/env";
+import { adminEmails, plexConfigured } from "@/lib/env";
+import { UNLIMITED_STREAMS, formatStreamLimit } from "@/lib/plans";
 import { grantPlexAccess, revokePlexAccess } from "@/lib/plex/share";
 
 /**
@@ -83,13 +84,25 @@ export async function applyEntitlement(
   const streamsFromPrice = paidFor && priceId ? await streamsForPrice(priceId) : 0;
 
   /**
-   * A banned user gets nothing, even with a live, paid subscription.
+   * Two rules decide entitlement, and both are checked HERE rather than anywhere else.
    *
-   * This check lives INSIDE the one door precisely so it cannot be bypassed. If it sat in the
-   * admin UI, a webhook arriving a second later would happily undo the ban.
+   * A banned user gets nothing, even with a live, paid subscription. That check lives inside
+   * the one door precisely so it cannot be bypassed — if it sat in the admin UI, a webhook
+   * arriving a second later would happily undo the ban.
+   *
+   * An admin is a member without paying, with no stream limit. They run the service; billing
+   * them for it is theatre, and a cap on the person who can lift anybody else's is not a
+   * control that means anything. Gated on `banned` too, so revoking the flag and revoking
+   * access stay separable — otherwise banning an admin would be a suggestion.
    */
-  const desiredIsMember = paidFor && !user.banned && streamsFromPrice > 0;
-  const desiredStreams = desiredIsMember ? streamsFromPrice : 0;
+  const byAdmin = user.isAdmin && !user.banned;
+
+  const desiredIsMember = byAdmin || (paidFor && !user.banned && streamsFromPrice > 0);
+  const desiredStreams = byAdmin
+    ? UNLIMITED_STREAMS
+    : desiredIsMember
+      ? streamsFromPrice
+      : 0;
 
   // ── 3. Work out what actually changed, for the audit log ───────────────────
   const wasMember = user.isMember;
@@ -148,7 +161,7 @@ export async function applyEntitlement(
     await logEvent({
       ...context,
       type: "tier_changed",
-      message: `${updated.email} moved from ${hadStreams} to ${desiredStreams} user${desiredStreams === 1 ? "" : "s"}`,
+      message: `${updated.email} moved from ${formatStreamLimit(hadStreams)} to ${formatStreamLimit(desiredStreams)}`,
       detail: { from: hadStreams, to: desiredStreams },
     });
   }
@@ -206,6 +219,20 @@ async function syncPlexShare(user: User, shouldHaveAccess: boolean, actor: Actor
   // Nothing to share with until they have told us who they are on Plex. Plex has no invite
   // links, so a share needs a real Plex identity up front.
   if (!user.plexUsername && !user.plexEmail) return;
+
+  /**
+   * Admins are never shared with, and never un-shared.
+   *
+   * They own the server. There is nothing to invite them to — Plex has no concept of sharing
+   * a library with its own owner, and asking it to would either fail or do something nobody
+   * intended. Linking a Plex account as an admin is purely identity: it tells the app who
+   * they are on Plex so streams can be attributed to them, and it must not send an invite.
+   *
+   * Read from the ADMIN_EMAILS allowlist rather than the is_admin column. The column is a
+   * cache kept in step opportunistically, and the one place you cannot afford it to be stale
+   * is the code that decides whether to write to a live Plex server.
+   */
+  if (adminEmails().includes(user.email.toLowerCase())) return;
 
   // The hard rail, checked before anything destructive.
   if (isProtected(user.plexUsername)) return;

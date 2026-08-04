@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { apiMember } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { logError } from "@/lib/events";
 import { PlexLinkError, pollLink } from "@/lib/plex/linking";
@@ -11,6 +12,9 @@ import { clearLinkTicket, readLinkTicket } from "@/lib/plex/link-ticket";
  * page with a result, so the outcome is visible rather than silent.
  */
 export async function GET() {
+  const member = await apiMember();
+  if (!member.ok) return member.response;
+
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/dashboard/plex");
 

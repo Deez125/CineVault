@@ -6,7 +6,7 @@ import { stripe, isEntitling } from "./client";
 import { pickEntitling } from "@/lib/entitlements";
 import { displayName } from "@/lib/display-name";
 import { logError } from "@/lib/events";
-import { REFERRAL_COUPON_ID, shouldDiscount } from "@/lib/referrals";
+import { REFEREE_PERCENT_OFF, REFERRAL_COUPON_ID, shouldDiscount } from "@/lib/referrals";
 
 /**
  * Starting a subscription.
@@ -60,9 +60,76 @@ export async function ensureCustomer(user: User): Promise<string> {
   return customer.id;
 }
 
+/**
+ * What the first invoice will come to, worked out BEFORE any subscription exists.
+ *
+ * Needed because of one specific case: when account credit covers the whole first month,
+ * Stripe marks the invoice paid and the subscription `active` the instant it is created —
+ * no card, no confirmation secret. Creating it on dialog-open would then subscribe somebody
+ * and spend their credit merely because they clicked a plan to look at it.
+ *
+ * So the dialog asks this first and only creates a subscription when there is actually money
+ * to collect. Computed locally rather than by previewing an invoice: the sums are ours (a
+ * percentage coupon and a balance, no tax), it costs one customer read instead of a preview
+ * call, and it is only ever used to decide whether a card is needed. Once a subscription does
+ * exist, the real invoice is authoritative and these numbers are discarded.
+ */
+export type CheckoutQuote = {
+  dueNow: number;
+  recurring: number;
+  discount: number;
+  creditApplied: number;
+  currency: string;
+};
+
+export async function quoteCheckout(user: User, priceId: string): Promise<CheckoutQuote> {
+  const price = await stripe.prices.retrieve(priceId);
+  const recurring = price.unit_amount ?? 0;
+  const currency = price.currency;
+
+  const discount = (await shouldDiscount(user.id))
+    ? Math.round((recurring * REFEREE_PERCENT_OFF) / 100)
+    : 0;
+
+  let balance = 0;
+  if (user.stripeCustomerId) {
+    const customer = await stripe.customers.retrieve(user.stripeCustomerId);
+    balance = customer.deleted ? 0 : Math.max(0, -customer.balance);
+  }
+
+  const afterDiscount = Math.max(0, recurring - discount);
+  const creditApplied = Math.min(balance, afterDiscount);
+
+  return {
+    dueNow: Math.max(0, afterDiscount - creditApplied),
+    recurring,
+    discount,
+    creditApplied,
+    currency,
+  };
+}
+
 export type CheckoutIntent = {
-  clientSecret: string;
+  /**
+   * Null when there was nothing to charge — credit covered the whole first invoice, so Stripe
+   * activated the subscription outright and there is no card step to perform.
+   */
+  clientSecret: string | null;
   subscriptionId: string;
+  /**
+   * What the card is actually charged today, after the referral coupon and any account
+   * credit. Frequently NOT the plan price, and the button has to say so — quoting the sticker
+   * price and then taking a different amount is the kind of surprise that ends in a
+   * chargeback, even when the surprise is in the customer's favour.
+   */
+  dueNow: number;
+  /** The plan's normal price — what it renews at once any first-month offer is spent. */
+  recurring: number;
+  /** Knocked off this first invoice by the referral coupon. */
+  discount: number;
+  /** Account credit consumed by this first invoice. */
+  creditApplied: number;
+  currency: string;
 };
 
 /**
@@ -137,15 +204,34 @@ export async function startCheckout(user: User, priceId: string): Promise<Checko
       metadata: { userId: user.id },
     }));
 
-  const clientSecret = await confirmationSecretFor(subscription);
+  // The invoice, resolved once and used for both the secret and the amounts. Re-fetched when
+  // it came back unexpanded, which happens for a subscription we reused rather than created.
+  const invoice = await resolveInvoice(subscription);
+  const clientSecret = readSecret(invoice);
 
-  if (!clientSecret) {
-    // Fail loudly HERE. Handed nothing, Stripe's Payment Element can only render "Something
-    // went wrong", and you get to debug a blank iframe instead of a message.
+  // A missing secret is FINE in exactly one case: nothing was owed, so Stripe collected
+  // nothing and made the subscription live on the spot. Anything else with no secret is a
+  // real failure — handed nothing, Stripe's Payment Element can only render "Something went
+  // wrong", and you get to debug a blank iframe instead of a message.
+  if (!clientSecret && !isEntitling(subscription.status)) {
     throw new Error("Stripe returned no confirmation secret for this subscription");
   }
 
-  return { clientSecret, subscriptionId: subscription.id };
+  const price = subscription.items.data[0]?.price;
+  const recurring = price?.unit_amount ?? 0;
+
+  return {
+    clientSecret,
+    subscriptionId: subscription.id,
+    // Straight from the invoice rather than computed here. Stripe has already applied the
+    // coupon and the balance in whatever order it applies them, and the only number worth
+    // showing is the one it is going to take.
+    dueNow: invoice?.amount_due ?? recurring,
+    recurring,
+    discount: invoice?.total_discount_amounts?.reduce((t, d) => t + d.amount, 0) ?? 0,
+    creditApplied: Math.max(0, -(invoice?.starting_balance ?? 0)),
+    currency: price?.currency ?? "usd",
+  };
 }
 
 /**
@@ -180,16 +266,20 @@ async function referralDiscount(user: User): Promise<{ discounts?: [{ coupon: st
 }
 
 /**
- * Dig the client secret out of a subscription's latest invoice.
+ * The subscription's first invoice, fully expanded.
  *
- * Re-fetches when the invoice came back unexpanded, which happens for a subscription we
- * reused rather than created.
+ * Re-fetches when it came back as an id or without its confirmation secret, which happens for
+ * a subscription we reused rather than created. One call serves both the secret the browser
+ * needs and the amounts the button has to quote — asking twice for the same object risks the
+ * two disagreeing.
  */
-async function confirmationSecretFor(
+async function resolveInvoice(
   subscription: Stripe.Subscription
-): Promise<string | null> {
-  const fromExpanded = readSecret(subscription.latest_invoice);
-  if (fromExpanded) return fromExpanded;
+): Promise<Stripe.Invoice | null> {
+  const expanded =
+    typeof subscription.latest_invoice === "string" ? null : subscription.latest_invoice;
+
+  if (expanded && readSecret(expanded)) return expanded;
 
   const invoiceId =
     typeof subscription.latest_invoice === "string"
@@ -198,11 +288,7 @@ async function confirmationSecretFor(
 
   if (!invoiceId) return null;
 
-  const invoice = await stripe.invoices.retrieve(invoiceId, {
-    expand: ["confirmation_secret"],
-  });
-
-  return readSecret(invoice);
+  return stripe.invoices.retrieve(invoiceId, { expand: ["confirmation_secret"] });
 }
 
 function readSecret(invoice: Stripe.Invoice | string | null | undefined): string | null {

@@ -3,8 +3,9 @@ import "../lib/load-env";
 import { env, assertProductionIntegrations, plexConfigured } from "../lib/env";
 import { assertEmailConfigured } from "../lib/email";
 import { reconcileAll } from "../lib/reconcile";
+import { enforceStreamLimits } from "../lib/enforce";
 import { refreshRecentlyAdded } from "../lib/plex/recently-added-cache";
-import { pruneExpiredSessions } from "../lib/maintenance";
+import { pruneExpiredSessions, pruneExpiredSignups } from "../lib/maintenance";
 import { purgeDeadLinks, sweepExpiredLinks } from "../lib/referrals";
 import { pool } from "../lib/db";
 import { logError } from "../lib/events";
@@ -19,13 +20,14 @@ import { logError } from "../lib/events";
  *   npm run worker
  *
  * What it does:
- *   - reconcile, every RECONCILE_INTERVAL_MS (default 5 minutes)
- *   - prune expired sessions, hourly
- *
- * The stream enforcer will join it once Tracearr's API is sorted.
+ *   - reconcile entitlements, every RECONCILE_INTERVAL_MS (default 5 minutes)
+ *   - enforce stream limits, every ENFORCE_INTERVAL_MS (default 20 seconds)
+ *   - refresh the recently-added cache, every 10 minutes
+ *   - prune expired sessions and dead invite links, hourly
  */
 
 const RECONCILE_MS = env.RECONCILE_INTERVAL_MS;
+const ENFORCE_MS = env.ENFORCE_INTERVAL_MS;
 const PRUNE_MS = 60 * 60 * 1000;
 /** New films land a few times a day. Ten minutes is far more often than they arrive. */
 const RECENTLY_ADDED_MS = 10 * 60 * 1000;
@@ -53,6 +55,8 @@ async function main() {
       `  reconcile every ${Math.round(RECONCILE_MS / 1000)}s`,
       `  prune sessions every ${Math.round(PRUNE_MS / 60000)}m`,
       `  recently added every ${Math.round(RECENTLY_ADDED_MS / 60000)}m`,
+      `  stream limits every ${Math.round(ENFORCE_MS / 1000)}s` +
+        (env.ENFORCE_STREAM_LIMITS ? "" : "  (DRY RUN — set ENFORCE_STREAM_LIMITS=true to act)"),
       `  plex: ${plexConfigured() ? "configured" : "NOT configured (shares will be skipped)"}`,
       "",
     ].join("\n")
@@ -70,6 +74,7 @@ async function main() {
     () => void safely("recently-added", runRecentlyAdded),
     RECENTLY_ADDED_MS
   );
+  const enforceTimer = setInterval(() => void safely("enforce", runEnforce), ENFORCE_MS);
 
   const stop = (signal: string) => {
     if (!running) return;
@@ -79,6 +84,7 @@ async function main() {
     clearInterval(reconcileTimer);
     clearInterval(pruneTimer);
     clearInterval(recentTimer);
+    clearInterval(enforceTimer);
 
     // Close the pool so the process actually exits rather than hanging on an open connection
     // and being SIGKILLed by the orchestrator thirty seconds later.
@@ -107,9 +113,26 @@ async function runRecentlyAdded() {
   if (result.items > 0) console.log(`  recently added: ${result.items} item(s) cached`);
 }
 
+async function runEnforce() {
+  const result = await enforceStreamLimits();
+
+  // Silent when nothing happened. This runs every twenty seconds, and a line each time saying
+  // "2 streams, nobody over" is how you stop reading the log at all.
+  if (result.terminated > 0 || result.wouldTerminate > 0) {
+    console.log(
+      `  enforce: ${result.terminated} stopped, ${result.wouldTerminate} would have been` +
+        ` (${result.sessions} streams, ${result.overLimit} over limit)`
+    );
+  }
+}
+
 async function runPrune() {
   const removed = await pruneExpiredSessions();
   if (removed > 0) console.log(`  pruned ${removed} expired session(s)`);
+
+  // Signups nobody confirmed. They were never accounts, so nothing else has to be tidied.
+  const signups = await pruneExpiredSignups();
+  if (signups > 0) console.log(`  pruned ${signups} unconfirmed signup(s)`);
 
   // Cosmetic, and deliberately hourly rather than urgent: an out-of-date invite already stops
   // working and already stops holding a slot the moment its timestamp passes. This only makes

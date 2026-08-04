@@ -3,10 +3,10 @@
 import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { emailTokens, users } from "@/lib/db/schema";
+import { emailTokens, pendingSignups, users } from "@/lib/db/schema";
 import { adminEmails } from "@/lib/env";
 import { logEvent } from "@/lib/events";
 import {
@@ -50,6 +50,15 @@ const emailSchema = z
   .max(254)
   .email("That doesn't look like an email address.");
 
+/**
+ * How long an unconfirmed signup survives before it is deleted.
+ *
+ * NOT exported: this is a "use server" module, and such a file may only export async
+ * functions. The worker does not need the number anyway — it deletes by comparing
+ * expires_at to now, which is the row's own opinion rather than a second copy of the rule.
+ */
+const SIGNUP_TTL_MS = 24 * 60 * 60 * 1000;
+
 const passwordSchema = z
   .string()
   .min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`)
@@ -84,13 +93,31 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
   }
 
   const passwordHash = await hashPassword(password);
+  const referralCode = formData.get("ref");
+  const ref = typeof referralCode === "string" && referralCode.trim() ? referralCode.trim() : null;
 
-  // Admin status comes from the ADMIN_EMAILS allowlist and nothing else. It is never
-  // something a form can ask for.
+  /**
+   * With verification on, signing up creates NOTHING.
+   *
+   * The row goes into `pending_signups`, which cannot sign in, cannot be shared with on Plex,
+   * cannot hold a subscription and cannot be referred. It becomes an account only when the
+   * emailed link is opened, and is deleted after 24 hours if it never is.
+   *
+   * This is also what restores the enumeration disguise. Whether or not the address is
+   * already taken, the answer is the same screen — "check your inbox" — and the only
+   * difference is which message arrives, which is visible solely to whoever owns the address.
+   */
+  if (emailVerificationRequired()) {
+    await beginSignup({ email, passwordHash, ref });
+    redirect(`/check-email?email=${encodeURIComponent(email)}`);
+  }
+
+  // Verification off: the old behaviour, an account straight away. Kept deliberately as the
+  // way back if sending ever breaks — a signup form that cannot create accounts because an
+  // email provider is down is worse than one that skips a confirmation.
   const isAdmin = adminEmails().includes(email);
 
   let userId: string;
-
   try {
     const [created] = await db
       .insert(users)
@@ -110,22 +137,78 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
     message: `${email} created an account`,
   });
 
-  // The code comes from the hidden field, which the signup page fills from ?ref= — captured
-  // NOW rather than at checkout, because this is when the link was followed. Never throws: a
-  // bad code must not stop somebody creating an account.
-  const referralCode = formData.get("ref");
-  if (typeof referralCode === "string" && referralCode.trim()) {
-    await attachReferral({ id: userId, email }, referralCode);
-  }
-
-  if (emailVerificationRequired()) {
-    await issueVerificationEmail(userId, email);
-  }
+  if (ref) await attachReferral({ id: userId, email }, ref);
 
   await createSession(userId, { ip, userAgent: await clientUserAgent() });
 
   redirect(next ?? "/dashboard");
 }
+
+/**
+ * Start a signup that has not proved itself yet.
+ *
+ * Never reveals whether the address is already taken. An address with a real account gets the
+ * "you already have one" message instead of a link, and an address with an older pending
+ * signup simply replaces it — asking twice must not leave two working links in two inboxes.
+ *
+ * Failures are swallowed on purpose: the caller redirects to the same screen either way, and
+ * an error that appears only for addresses that already exist is an enumeration oracle with
+ * extra steps.
+ */
+async function beginSignup(input: {
+  email: string;
+  passwordHash: string;
+  ref: string | null;
+}): Promise<void> {
+  const { email, passwordHash, ref } = input;
+
+  try {
+    const [existing] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (existing) {
+      await sendEmail({
+        to: email,
+        subject: "You already have a CineVault account",
+        text: [
+          "Someone tried to sign up with this email address, but an account already exists.",
+          "",
+          "If that was you, sign in instead. If you've forgotten your password, use the",
+          "'Forgot password' link on the sign-in page.",
+          "",
+          "If it wasn't you, nothing has changed and you can ignore this.",
+        ].join("\n"),
+      });
+      return;
+    }
+
+    const token = crypto.randomBytes(32).toString("base64url");
+
+    await db
+      .delete(pendingSignups)
+      .where(sql`lower(${pendingSignups.email}) = lower(${email})`);
+
+    await db.insert(pendingSignups).values({
+      email,
+      passwordHash,
+      tokenHash: tokenHash(token),
+      referralCode: ref,
+      expiresAt: new Date(Date.now() + SIGNUP_TTL_MS),
+    });
+
+    await sendEmail(verificationEmail(email, token));
+  } catch (err) {
+    console.error(
+      "[signup] could not start a pending signup:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+
 
 /**
  * Somebody tried to sign up with an address that already has an account.
@@ -313,6 +396,10 @@ export async function resetPasswordAction(_prev: FormState, formData: FormData):
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function verifyEmailToken(token: string): Promise<boolean> {
+  // A pending signup first. That is the common case now: most links are somebody finishing
+  // signing up, not an existing member confirming a changed address.
+  if (await completeSignup(token)) return true;
+
   const record = await consumeToken(token, "verify_email");
   if (!record) return false;
 
@@ -322,6 +409,137 @@ export async function verifyEmailToken(token: string): Promise<boolean> {
     .where(eq(users.id, record.userId));
 
   return true;
+}
+
+/**
+ * Turn a pending signup into a real account, and sign them in.
+ *
+ * This is where an account is actually created under the verify-first flow, which means it is
+ * the one place that has to get several things right at once:
+ *
+ *   - The row is DELETED as part of claiming it, and the delete is what decides the winner.
+ *     Two clicks on the same link race here, and only the one whose delete returns a row goes
+ *     on to create an account. Checking first and deleting after would create two.
+ *   - Expiry is judged from the row, so a link that outlived its day fails even if the sweep
+ *     has not run yet.
+ *   - The referral is applied here rather than at signup, because there was nobody to attach
+ *     it to until now.
+ *   - Admin status still comes from the allowlist, never from anything the form carried.
+ */
+async function completeSignup(token: string): Promise<boolean> {
+  const [claimed] = await db
+    .delete(pendingSignups)
+    .where(eq(pendingSignups.tokenHash, tokenHash(token)))
+    .returning();
+
+  if (!claimed) return false;
+  if (claimed.expiresAt.getTime() <= Date.now()) return false;
+
+  const isAdmin = adminEmails().includes(claimed.email);
+
+  let userId: string;
+  try {
+    const [created] = await db
+      .insert(users)
+      .values({
+        email: claimed.email,
+        passwordHash: claimed.passwordHash,
+        isAdmin,
+        // Confirmed by definition: opening this link is the proof.
+        emailVerifiedAt: new Date(),
+      })
+      .returning({ id: users.id });
+    userId = created.id;
+  } catch (err) {
+    // Somebody registered that address in the meantime. The pending row is already gone,
+    // which is right — it is no longer wanted either way.
+    if (isUniqueViolation(err)) return false;
+    throw err;
+  }
+
+  await logEvent({
+    type: "account_created",
+    userId,
+    email: claimed.email,
+    actor: "user",
+    message: `${claimed.email} created an account`,
+  });
+
+  if (claimed.referralCode) {
+    await attachReferral({ id: userId, email: claimed.email }, claimed.referralCode);
+  }
+
+  await createSession(userId, { ip: await clientIp(), userAgent: await clientUserAgent() });
+
+  return true;
+}
+
+
+/**
+ * Send the confirmation link again, from the "check your inbox" screen.
+ *
+ * Takes an address rather than a session, because the whole point is that nobody is signed
+ * in yet. That makes it an enumeration risk by construction, so it is answered identically
+ * whatever the address turns out to be — no account, a pending signup, or a real one — and
+ * rate limited per address so it cannot be used to hammer somebody's inbox either.
+ */
+export async function resendSignupAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = emailSchema.safeParse(formData.get("email"));
+  const same = { success: "Sent. Check your inbox, including spam." };
+
+  if (!parsed.success) return same;
+  const email = parsed.data;
+
+  if (!rateLimit(`resend-signup:${email}`, 3, 15 * 60 * 1000).allowed) {
+    return { error: "We've sent a few already. Check your spam folder, then try again shortly." };
+  }
+
+  const [pending] = await db
+    .select()
+    .from(pendingSignups)
+    .where(sql`lower(${pendingSignups.email}) = lower(${email})`)
+    .limit(1);
+
+  if (!pending) {
+    // No pending signup. There may still be a real account that never confirmed — the
+    // backstop in requireUser redirects those here, and a button that silently did nothing
+    // for them would be worse than not showing one.
+    const [unverified] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.email, email), isNull(users.emailVerifiedAt)))
+      .limit(1);
+
+    if (unverified) {
+      try {
+        await sendEmail(
+          verificationEmail(email, await issueToken(unverified.id, "verify_email", SIGNUP_TTL_MS))
+        );
+      } catch (err) {
+        console.error("[signup] resend failed:", err instanceof Error ? err.message : err);
+      }
+    }
+
+    // Either way — unknown address, real account, or nothing at all — the same answer.
+    return same;
+  }
+
+  try {
+    // A NEW token, and the old one dies with it. Two live links in two emails is a way to
+    // wonder later which of them was clicked.
+    const token = crypto.randomBytes(32).toString("base64url");
+
+    await db
+      .update(pendingSignups)
+      .set({ tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + SIGNUP_TTL_MS) })
+      .where(eq(pendingSignups.id, pending.id));
+
+    await sendEmail(verificationEmail(email, token));
+  } catch (err) {
+    console.error("[signup] resend failed:", err instanceof Error ? err.message : err);
+  }
+
+  return same;
 }
 
 export async function resendVerificationAction(): Promise<FormState> {
@@ -371,6 +589,34 @@ async function issueToken(userId: string, purpose: string, ttlMs: number): Promi
   });
 
   return token;
+}
+
+/**
+ * Is this token live — without spending it?
+ *
+ * For deciding whether to show somebody a form at all. A dead link that renders a password
+ * field and only objects after they have chosen one reads as broken, and it is the reason a
+ * superseded link "still works": the page opens, so it looks accepted, when in fact the submit
+ * behind it was always going to be refused.
+ *
+ * Deliberately does NOT consume. Mail clients and security scanners fetch links before anybody
+ * clicks them, and a check that burned the token would mean the real person always arrives to
+ * a dead one.
+ */
+export async function tokenIsLive(token: string, purpose: string): Promise<boolean> {
+  const [row] = await db
+    .select({ expiresAt: emailTokens.expiresAt })
+    .from(emailTokens)
+    .where(
+      and(
+        eq(emailTokens.id, tokenHash(token)),
+        eq(emailTokens.purpose, purpose),
+        isNull(emailTokens.usedAt)
+      )
+    )
+    .limit(1);
+
+  return Boolean(row) && row.expiresAt.getTime() > Date.now();
 }
 
 /** Redeem a token, atomically, exactly once. */

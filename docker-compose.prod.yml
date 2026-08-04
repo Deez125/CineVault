@@ -8,7 +8,11 @@
 #
 # WHAT MUST BE SET IN COOLIFY BEFORE THE FIRST DEPLOY
 #   POSTGRES_PASSWORD, SESSION_SECRET, STRIPE_SECRET_KEY,
-#   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, APP_URL, ADMIN_EMAILS
+#   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, APP_URL, ADMIN_EMAILS,
+#   RESEND_API_KEY
+#
+# Anything marked `:?` below stops the deploy if it is missing, rather than starting a
+# container that is quietly missing a feature.
 #
 # The app validates all of it at boot and refuses to start if something required is missing.
 # A container that will not start is a far better failure than one that serves a broken
@@ -66,6 +70,13 @@ services:
       PLEX_CLIENT_IDENTIFIER: ${PLEX_CLIENT_IDENTIFIER:-}
       PLEX_PROTECTED_USERS: ${PLEX_PROTECTED_USERS:-}
 
+      # Required, not defaulted. Without a key the app does not fail loudly — it quietly
+      # decides email verification is impossible and lets signups through unverified, and
+      # password resets report success while sending nothing. Refusing to boot is better.
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY must be set}
+      EMAIL_FROM: "${EMAIL_FROM:-CineVault <noreply@getcinevault.com>}"
+      EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-https://getcinevault.com/logo.png}
+
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
       ENABLE_DEBUG_PANEL: ${ENABLE_DEBUG_PANEL:-false}
@@ -108,8 +119,25 @@ services:
       PLEX_CLIENT_IDENTIFIER: ${PLEX_CLIENT_IDENTIFIER:-}
       PLEX_PROTECTED_USERS: ${PLEX_PROTECTED_USERS:-}
 
+      # The worker calls assertEmailConfigured() on startup and will not run without this.
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY must be set}
+      EMAIL_FROM: "${EMAIL_FROM:-CineVault <noreply@getcinevault.com>}"
+      EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-https://getcinevault.com/logo.png}
+
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+
+      # The worker does not branch on this today, but it is what prunes pending_signups — the
+      # table this flag creates. Letting the two services disagree about whether the feature
+      # is even on is a trap for whoever touches it next.
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
+
       RECONCILE_INTERVAL_MS: ${RECONCILE_INTERVAL_MS:-300000}
+
+      # Stream enforcement lives here, not in web. Defaults to false so a deploy can never
+      # start killing streams on its own — it has to be turned on deliberately.
+      ENFORCE_STREAM_LIMITS: ${ENFORCE_STREAM_LIMITS:-false}
+      ENFORCE_INTERVAL_MS: ${ENFORCE_INTERVAL_MS:-20000}
+
       LOG_LEVEL: ${LOG_LEVEL:-info}
 
 volumes:

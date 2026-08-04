@@ -45,25 +45,25 @@ const INTERVAL = "month" as const;
 const TIERS: TierSpec[] = [
   {
     streams: 1,
-    name: "1 User",
+    name: "1 Concurrent Stream",
     description: "For one person. One thing playing at a time.",
     amount: 2000,
   },
   {
     streams: 2,
-    name: "2 Users",
+    name: "2 Concurrent Streams",
     description: "For a couple, or a small household.",
     amount: 3000,
   },
   {
     streams: 3,
-    name: "3 Users",
+    name: "3 Concurrent Streams",
     description: "For a household that watches separately.",
     amount: 4000,
   },
   {
     streams: 4,
-    name: "4 Users",
+    name: "4 Concurrent Streams",
     description: "For a full house, or a few friends.",
     amount: 5000,
   },

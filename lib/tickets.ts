@@ -325,3 +325,64 @@ export async function getTicketOwner(ticket: Ticket) {
 
   return user ?? null;
 }
+
+/**
+ * How many of this member's tickets have something they haven't read.
+ *
+ * Same rule as the inbox row: unread means the OTHER side has spoken since they last looked.
+ * Closed tickets count too — a final reply that closes a ticket is still a reply worth
+ * seeing, and hiding it would mean the dot vanishes at the moment the answer arrives.
+ */
+export async function countUnreadForUser(userId: string): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(tickets)
+    .where(
+      and(
+        eq(tickets.userId, userId),
+        sql`(${tickets.userReadAt} is null or ${tickets.lastMessageAt} > ${tickets.userReadAt})`
+      )
+    );
+
+  return row?.n ?? 0;
+}
+
+/**
+ * When the newest unread reply arrived for this member, or null if nothing is unread.
+ *
+ * A timestamp rather than a count, because the support dot has to come BACK when something
+ * new lands after they last looked. A count cannot distinguish "the same two I already saw"
+ * from "a third one just arrived".
+ */
+export async function newestUnreadForUser(userId: string): Promise<Date | null> {
+  const [row] = await db
+    .select({ at: tickets.lastMessageAt })
+    .from(tickets)
+    .where(
+      and(
+        eq(tickets.userId, userId),
+        sql`(${tickets.userReadAt} is null or ${tickets.lastMessageAt} > ${tickets.userReadAt})`
+      )
+    )
+    .orderBy(desc(tickets.lastMessageAt))
+    .limit(1);
+
+  return row?.at ?? null;
+}
+
+/** The same, for the admin inbox. */
+export async function newestAwaitingAdmin(): Promise<Date | null> {
+  const [row] = await db
+    .select({ at: tickets.lastMessageAt })
+    .from(tickets)
+    .where(
+      and(
+        eq(tickets.status, TICKET_OPEN),
+        sql`(${tickets.adminReadAt} is null or ${tickets.lastMessageAt} > ${tickets.adminReadAt})`
+      )
+    )
+    .orderBy(desc(tickets.lastMessageAt))
+    .limit(1);
+
+  return row?.at ?? null;
+}

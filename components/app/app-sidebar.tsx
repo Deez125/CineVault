@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
   Activity,
   CreditCard,
@@ -32,6 +33,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
 import type { SessionUser } from "@/lib/auth/session";
 
@@ -49,19 +51,40 @@ import type { SessionUser } from "@/lib/auth/session";
  * time something ships.
  */
 
+/**
+ * A notification dot. Presence means "something here wants you", colour says what kind.
+ *
+ * Deliberately a dot and not a count. A number implies you can clear it by reading exactly
+ * that many things, which is a promise the sidebar cannot keep — and an unread ticket and a
+ * newly unlocked page are not quantities of the same thing.
+ */
+export type NavDot = "red" | "blue";
+
+/** Which item a dot belongs to, keyed by href so the layout never repeats a label. */
+export type NavDots = Record<string, NavDot | undefined>;
+
 type NavItem = {
   href: string;
   label: string;
   icon: typeof LayoutGrid;
   soon?: boolean;
+  /** Only visible to somebody with a live plan. */
+  member?: boolean;
 };
 
+/**
+ * `member: true` means a plan buys it.
+ *
+ * Those pages 404 for anybody without one, so listing them would be a link to a dead end.
+ * Hidden rather than shown-and-disabled: an account that has not paid yet is not missing a
+ * feature, it just has a smaller app until it does.
+ */
 const ACCOUNT_NAV: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutGrid },
-  { href: "/dashboard/plex", label: "Plex", icon: Play },
+  { href: "/dashboard/plex", label: "Plex", icon: Play, member: true },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/support", label: "Support", icon: MessageSquare },
-  { href: "/dashboard/referrals", label: "Referrals", icon: Gift },
+  { href: "/dashboard/referrals", label: "Referrals", icon: Gift, member: true },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
@@ -74,8 +97,28 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/settings", label: "Service settings", icon: SlidersHorizontal },
 ];
 
-export function AppSidebar({ user }: { user: SessionUser }) {
+export function AppSidebar({ user, dots }: { user: SessionUser; dots?: NavDots }) {
   const pathname = usePathname();
+
+  /**
+   * Rows whose dot has been cleared in this browser already.
+   *
+   * Local state as well as the server write, so the dot goes the instant it is clicked rather
+   * than on whatever the next full render happens to be. The write is what makes it stick;
+   * this is what makes it feel like it worked.
+   */
+  const [dismissed, setDismissed] = useState<string[]>([]);
+
+  const dotFor = (href: string) =>
+    href === pathname || dismissed.includes(href) ? undefined : dots?.[href];
+
+  // Purely cosmetic, and deliberately so. The page itself records the visit server-side
+  // when it renders, which is what makes it durable and works without JavaScript; this only
+  // removes the dot the instant it is clicked, rather than after the navigation completes.
+  function dismiss(href: string) {
+    if (!dots?.[href] || dismissed.includes(href)) return;
+    setDismissed((prev) => [...prev, href]);
+  }
 
   return (
     <Sidebar collapsible="icon">
@@ -92,8 +135,15 @@ export function AppSidebar({ user }: { user: SessionUser }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {ACCOUNT_NAV.map((item) => (
-                <NavRow key={item.href} item={item} pathname={pathname} exact={item.href === "/dashboard"} />
+              {ACCOUNT_NAV.filter((item) => !item.member || user.isMember || user.isAdmin).map((item) => (
+                <NavRow
+                  key={item.href}
+                  item={item}
+                  pathname={pathname}
+                  exact={item.href === "/dashboard"}
+                  dot={dotFor(item.href)}
+                  onSeen={dismiss}
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -114,6 +164,8 @@ export function AppSidebar({ user }: { user: SessionUser }) {
                     item={item}
                     pathname={pathname}
                     exact={item.href === "/admin"}
+                    dot={dotFor(item.href)}
+                    onSeen={dismiss}
                   />
                 ))}
               </SidebarMenu>
@@ -136,10 +188,14 @@ function NavRow({
   item,
   pathname,
   exact,
+  dot,
+  onSeen,
 }: {
   item: NavItem;
   pathname: string;
   exact: boolean;
+  dot?: NavDot;
+  onSeen: (href: string) => void;
 }) {
   // Section roots match exactly, everything else by prefix. Otherwise /admin/users would
   // light up "Admin Overview" as well as itself.
@@ -159,10 +215,36 @@ function NavRow({
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton isActive={active} tooltip={item.label} render={<Link href={item.href} />}>
+      <SidebarMenuButton
+        isActive={active}
+        tooltip={item.label}
+        onClick={() => onSeen(item.href)}
+        render={<Link href={item.href} />}
+      >
         <item.icon />
         <span>{item.label}</span>
+        {dot && <Dot tone={dot} />}
       </SidebarMenuButton>
     </SidebarMenuItem>
+  );
+}
+
+/**
+ * The dot.
+ *
+ * `ml-auto` puts it at the trailing edge of the row, and it survives the rail collapsing to
+ * icons — where the label is hidden but the dot is not, so a collapsed sidebar still shows
+ * that something is waiting.
+ */
+function Dot({ tone }: { tone: NavDot }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "ml-auto size-2 shrink-0 rounded-full",
+        "group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:right-1.5 group-data-[collapsible=icon]:top-1.5 group-data-[collapsible=icon]:ml-0",
+        tone === "red" ? "bg-destructive" : "bg-primary"
+      )}
+    />
   );
 }

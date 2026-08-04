@@ -7,6 +7,7 @@ import { TicketThread } from "@/components/app/ticket-thread";
 import { requireAdmin } from "@/lib/auth";
 import { displayName } from "@/lib/display-name";
 import { getTicket, getTicketOwner, listMessages, markRead } from "@/lib/tickets";
+import { formatStreamLimit } from "@/lib/plans";
 
 export const metadata: Metadata = { title: "Ticket" };
 
@@ -46,7 +47,7 @@ export default async function AdminTicketPage({ params }: { params: Promise<{ id
           <Fact label="Member" value={displayName(owner)} />
           <Fact
             label="Plan"
-            value={owner.isMember ? `${owner.streamLimit} user${owner.streamLimit === 1 ? "" : "s"}` : "none"}
+            value={owner.isMember ? formatStreamLimit(owner.streamLimit) : "none"}
           />
           <Fact label="Plex" value={owner.plexUsername ?? "not linked"} />
           {owner.banned && <Fact label="Status" value="banned" tone="destructive" />}

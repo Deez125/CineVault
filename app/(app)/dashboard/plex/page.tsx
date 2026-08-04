@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/app/page-header";
 import { FlashToast } from "@/components/app/flash-toast";
 import { PlexClient } from "./plex-client";
-import { requireUser } from "@/lib/auth";
+import { requireMember, isMemberOrAdmin } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getSharedLibraries } from "@/lib/plex/client";
+import { markNavSeen } from "@/lib/nav-seen";
 
 export const metadata: Metadata = { title: "Plex" };
 
@@ -21,7 +22,11 @@ export default async function PlexPage({
 }: {
   searchParams: Promise<{ linked?: string; error?: string; message?: string }>;
 }) {
-  await requireUser("/dashboard/plex");
+  await requireMember();
+
+  // Opening the section clears its dot. Done on the SERVER so it sticks without
+  // JavaScript and however they arrived — a bookmark, browser back, a link elsewhere.
+  await markNavSeen("/dashboard/plex");
   const user = await getCurrentUser();
   if (!user) return null;
 
@@ -39,7 +44,11 @@ export default async function PlexPage({
    * read it out of the page source in two clicks. If it should not be known, it should not be
    * sent. Non-members get the COUNT, which is a selling point rather than a leak.
    */
-  const canSeeTitles = user.isMember;
+  // Admins included: they run the server, so hiding its library names from them would be
+  // theatre. Checked through the same helper as the page guards, because `is_member` is
+  // derived and a freshly created admin still has it false.
+  const entitled = isMemberOrAdmin(user);
+  const canSeeTitles = entitled;
 
   return (
     <>
@@ -61,7 +70,8 @@ export default async function PlexPage({
         state={{
           plexUsername: user.plexUsername,
           shareState: user.shareState,
-          isMember: user.isMember,
+          isMember: entitled,
+          isAdmin: user.isAdmin,
           streamLimit: user.streamLimit,
         }}
         libraries={

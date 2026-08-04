@@ -80,6 +80,20 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
 
     /**
+     * When this member last opened each sidebar section, keyed by href.
+     *
+     *   { "/dashboard/plex": "2026-08-03T12:00:00.000Z", ... }
+     *
+     * Drives the notification dots: a section is "new" until it has been opened, and a
+     * support dot comes back when a reply lands after the last visit.
+     *
+     * jsonb rather than a column per section, because the set of sections is a product
+     * decision that changes, and a migration per nav item would be a migration nobody
+     * remembers to write.
+     */
+    navSeen: jsonb("nav_seen").notNull().default({}).$type<Record<string, string>>(),
+
+    /**
      * Who sent them, captured at SIGNUP.
      *
      * Recorded then rather than at checkout because that is when the link was followed. If it
@@ -157,6 +171,52 @@ export const users = pgTable(
       .where(notNull("username")),
     index("users_stripe_subscription_id_idx").on(t.stripeSubscriptionId),
     index("users_is_member_idx").on(t.isMember),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// pending_signups
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Somebody who has filled in the signup form but not yet proved they own the address.
+ *
+ * They are NOT a user. Nothing here can sign in, be shared with on Plex, hold a subscription
+ * or be referred — a row in this table is an intention, and it becomes an account only when
+ * the emailed link is opened. Unopened ones are deleted after a day.
+ *
+ * Kept apart from `users` rather than being a flag on it, because half of this codebase asks
+ * "is there a user with this email" and every one of those questions would need to learn about
+ * a second kind of user that does not count. A separate table means an unverified signup
+ * cannot leak into anything by being forgotten about.
+ */
+export const pendingSignups = pgTable(
+  "pending_signups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+
+    email: text("email").notNull(),
+    /** Already hashed. A pending signup is not a reason to hold a password in the clear. */
+    passwordHash: text("password_hash").notNull(),
+
+    /**
+     * SHA-256 of the emailed token, never the token itself — same rule as email_tokens. A
+     * dump of this table must not hand anybody a working link.
+     */
+    tokenHash: text("token_hash").notNull(),
+
+    /** The invite they arrived through, applied when the account is actually created. */
+    referralCode: text("referral_code"),
+
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One pending signup per address. Asking again replaces the old one, so a second attempt
+    // does not leave a stale link working in an older email.
+    uniqueIndex("pending_signups_email_key").on(sql`lower(${t.email})`),
+    uniqueIndex("pending_signups_token_key").on(t.tokenHash),
+    index("pending_signups_expires_idx").on(t.expiresAt),
   ]
 );
 
@@ -550,6 +610,7 @@ export const kv = pgTable("kv", {
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
+export type PendingSignup = typeof pendingSignups.$inferSelect;
 export type EmailToken = typeof emailTokens.$inferSelect;
 export type Event = typeof events.$inferSelect;
 export type NewEvent = typeof events.$inferInsert;

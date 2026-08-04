@@ -154,7 +154,7 @@ export function BillingClient({
 
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-3xl font-semibold">
-                {sub.streams} user{sub.streams === 1 ? "" : "s"}
+                {sub.streams} stream{sub.streams === 1 ? "" : "s"}
               </span>
               <span className="text-sm text-muted-foreground">
                 {money(sub.amount, sub.currency)}/{sub.interval}

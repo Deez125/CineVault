@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthForm } from "@/components/auth/auth-form";
+import { ForgotPasswordLink } from "./forgot-link";
 import { loginAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 
@@ -57,12 +58,7 @@ export default async function LoginPage({
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Password</Label>
-            <Link
-              href="/forgot"
-              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              Forgot password?
-            </Link>
+            <ForgotPasswordLink />
           </div>
           <Input
             id="password"

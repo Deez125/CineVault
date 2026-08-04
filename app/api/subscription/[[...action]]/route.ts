@@ -65,6 +65,16 @@ export async function POST(
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "not signed in" }, { status: 401 });
 
+  // Admins have no subscription to preview, change, cancel or put a card against — they are
+  // entitled by their flag, for free, with no limit. The billing page does not offer any of
+  // this to them, but a UI that does not render a button is not a rule.
+  if (user.isAdmin) {
+    return Response.json(
+      { error: "Admin accounts don't have a subscription to manage." },
+      { status: 409 }
+    );
+  }
+
   const body = await request.json().catch(() => ({}));
 
   try {

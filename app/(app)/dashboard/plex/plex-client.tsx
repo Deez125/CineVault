@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { formatStreamLimit } from "@/lib/plans";
 
 export type PlexLibrary = { id: string; title: string; type: string };
 
@@ -36,6 +37,7 @@ type PlexState = {
   plexUsername: string | null;
   shareState: string;
   isMember: boolean;
+  isAdmin: boolean;
   streamLimit: number;
 };
 
@@ -58,6 +60,54 @@ export function PlexClient({
   const linked = Boolean(state.plexUsername);
   const shared = state.shareState === "invited";
 
+  /**
+   * The owner's own account, not a guest of it.
+   *
+   * Almost everything on this page describes a journey an admin never takes: an invite going
+   * out, waiting for it, accepting it. They already have the server — linking here only tells
+   * the app who they are on Plex.
+   */
+  const owner = state.isAdmin;
+
+  /**
+   * Whether Plex says the invite has been accepted.
+   *
+   * Held HERE rather than inside the panel that shows it, because step 3 of the walkthrough
+   * asks the same question. Two components fetching it separately would be two answers that
+   * can differ, and a tick on the step while the panel still offers the button is exactly the
+   * sort of contradiction people notice.
+   *
+   * "idle" means there is nothing to ask about yet — no share, so no invite.
+   */
+  const [invite, setInvite] = useState<InviteState>(shared ? "checking" : "idle");
+
+  /**
+   * The invite state, but only ever believed while a share actually exists.
+   *
+   * `invite` is a fetched answer that outlives the question. Unlinking re-renders the server
+   * components — plexUsername goes null, `shared` goes false — but this client component is
+   * not remounted, so a stale "accepted" survived and step 3 kept its green tick on a page
+   * otherwise saying the account was not linked at all.
+   *
+   * Deriving it means the contradiction cannot happen: no share, no answer.
+   */
+  const inviteState: InviteState = shared ? invite : "idle";
+
+  useEffect(() => {
+    if (!shared) return;
+    let cancelled = false;
+
+    fetch("/api/plex/invite")
+      .then((res) => res.json())
+      .then((body) => !cancelled && setInvite(body.state ?? "unknown"))
+      // A failed check is not a failed invite. Say we could not tell.
+      .catch(() => !cancelled && setInvite("unknown"));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shared]);
+
   return (
     <>
       <div className="grid gap-5 xl:grid-cols-3">
@@ -73,7 +123,14 @@ export function PlexClient({
                   </div>
 
                   <div className="mt-1 flex items-center gap-1.5 text-sm">
-                    {shared ? (
+                    {owner ? (
+                      <>
+                        <CircleCheck className="size-4 text-success" />
+                        <span className="text-muted-foreground">
+                          You own {SERVER_NAME}
+                        </span>
+                      </>
+                    ) : shared ? (
                       <>
                         <CircleCheck className="size-4 text-success" />
                         <span className="text-muted-foreground">Shared with {SERVER_NAME}</span>
@@ -92,12 +149,13 @@ export function PlexClient({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  {shared && (
+                  {(shared || owner) && (
                     <Button
                       size="lg"
                       className="bg-plex text-plex-foreground hover:bg-plex/90"
                       render={<a href="https://app.plex.tv" target="_blank" rel="noreferrer" />}
                     >
+                      <FaAngleRight />
                       Open Plex
                       <ExternalLink />
                     </Button>
@@ -110,18 +168,21 @@ export function PlexClient({
               </div>
 
               <dl className="grid gap-px bg-border sm:grid-cols-3">
-                <Stat label="Watching at once" value={state.isMember ? String(state.streamLimit) : "—"} />
+                <Stat label="Watching at once" value={state.isMember ? formatStreamLimit(state.streamLimit) : "—"} />
                 <Stat label="Libraries" value={libraryCount ? String(libraryCount) : "—"} />
                 <Stat
                   label="Access"
-                  value={shared ? "Ready" : state.isMember ? "Pending" : "No plan"}
-                  tone={shared ? "success" : state.isMember ? "warning" : "muted"}
+                  value={owner ? "Owner" : shared ? "Ready" : state.isMember ? "Pending" : "No plan"}
+                  tone={owner || shared ? "success" : state.isMember ? "warning" : "muted"}
                 />
               </dl>
 
+              {shared && <InvitePanel state={inviteState} />}
+
               <p className="p-6 text-xs leading-relaxed text-muted-foreground">
-                Linked the wrong account? Unlink it and sign in with a different one. Your
-                subscription isn&apos;t affected, and you&apos;ll be invited straight back in.
+                {owner
+                  ? "Linked the wrong account? Unlink it and sign in with a different one. Nothing is shared or removed on your behalf — this only tells CineVault who you are on Plex."
+                  : "Linked the wrong account? Unlink it and sign in with a different one. Your subscription isn't affected, and you'll be invited straight back in."}
               </p>
             </>
           ) : (
@@ -201,27 +262,37 @@ export function PlexClient({
         </section>
       </div>
 
-      {/* ── How this works ───────────────────────────────────────────────────── */}
-      <div className="mt-5 grid gap-5 md:grid-cols-3">
-        <Step
-          n={1}
-          title="Sign in with Plex"
-          body="On Plex's own site. It takes one click if you're already signed in there."
-          done={linked}
-        />
-        <Step
-          n={2}
-          title="We share the libraries"
-          body="An invite lands in your Plex account as soon as you have an active plan."
-          done={shared}
-        />
-        <Step
-          n={3}
-          title="Accept and watch"
-          body="Open Plex, accept the invite, and the libraries appear alongside your own."
-          done={false}
-        />
-      </div>
+      {/* ── How this works ───────────────────────────────────────────────────
+          Hidden from the owner. Every step describes something that happens TO a guest —
+          an invite going out, waiting for it, accepting it — and none of it happens to the
+          person whose server it is. Showing it anyway would be instructions for somebody
+          else's situation. */}
+      {!owner && (
+        <div className="mt-5 grid gap-5 md:grid-cols-3">
+          <Step
+            n={1}
+            title="Sign in with Plex"
+            body="On Plex's own site. It takes one click if you're already signed in there."
+            done={linked}
+          />
+          <Step
+            n={2}
+            title="We share the libraries"
+            body="An invite lands in your Plex account as soon as you have an active plan."
+            done={shared}
+          />
+          <Step
+            n={3}
+            title={inviteState === "accepted" ? "Accepted — go and watch" : "Accept and watch"}
+            body={
+              inviteState === "accepted"
+                ? "The libraries are on your Plex account, alongside your own."
+                : "Open Plex, accept the invite, and the libraries appear alongside your own."
+            }
+            done={inviteState === "accepted"}
+          />
+        </div>
+      )}
 
       <UnlinkDialog
         key={`unlink-${unlinking}`}
@@ -411,5 +482,84 @@ function UnlinkDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+/**
+ * What Plex says about the invite.
+ *
+ *   idle      nothing shared yet, so nothing to ask
+ *   checking  asking
+ *   accepted  they are in
+ *   pending   invited, not yet accepted
+ *   none      Plex has no share for them at all
+ *   unknown   the check itself failed — NOT the same as "not accepted"
+ */
+type InviteState = "idle" | "checking" | "accepted" | "pending" | "none" | "unknown";
+
+/** Where Plex sends an invite to be accepted. */
+const PLEX_INVITES_URL = "https://app.plex.tv/desktop/#!/settings/manage-library-access";
+
+/**
+ * Has the invite actually been accepted?
+ *
+ * Worth asking, because "we sent it" and "they have it" are different facts and only Plex
+ * knows the second one. Plex auto-accepts for anybody who has previously accepted a share
+ * from this server, so a good share of members will never see the button at all — which is
+ * precisely why guessing either way would be wrong.
+ *
+ * Checked on mount rather than rendered from the server, so the page appears immediately and
+ * the slow part (listing every share on the server) resolves underneath a spinner instead of
+ * holding up the whole page.
+ */
+function InvitePanel({ state }: { state: InviteState }) {
+  if (state === "idle") return null;
+
+  if (state === "checking") {
+    return (
+      <div className="flex items-center gap-2 border-t p-6 text-sm text-muted-foreground">
+        <LoaderCircle className="size-4 animate-spin" />
+        Checking your Plex invite
+      </div>
+    );
+  }
+
+  if (state === "accepted") {
+    return (
+      <div className="flex items-center gap-2 border-t p-6 text-sm">
+        <CircleCheck className="size-4 shrink-0 text-success" />
+        <span>
+          <span className="font-medium">Invite accepted.</span>{" "}
+          <span className="text-muted-foreground">
+            The library is on your Plex account — nothing else to do.
+          </span>
+        </span>
+      </div>
+    );
+  }
+
+  // pending, none, or we could not tell. All three are answered by the same button: go and
+  // look. Offering it when unsure is the safe direction — the page it opens is harmless, and
+  // the alternative is telling somebody they are fine when they might not be.
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t p-6">
+      <p className="text-sm text-muted-foreground">
+        {state === "pending"
+          ? "Your invite is waiting to be accepted. Open Plex to accept it, or check your email."
+          : state === "unknown"
+            ? "We couldn't check your invite just now. Accept it in Plex, or check your email."
+            : "No invite found yet. If one was sent, accept it in Plex or check your email."}
+      </p>
+
+      <Button
+        size="lg"
+        className="bg-plex text-plex-foreground hover:bg-plex/90"
+        render={<a href={PLEX_INVITES_URL} target="_blank" rel="noreferrer" />}
+      >
+        Accept in Plex
+        <ExternalLink />
+      </Button>
+    </div>
   );
 }

@@ -7,7 +7,16 @@ import { requestResetAction } from "@/lib/auth/actions";
 
 export const metadata: Metadata = { title: "Reset your password" };
 
-export default function ForgotPage() {
+export default async function ForgotPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ email?: string }>;
+}) {
+  // Carried over from the sign-in form, so nobody types their address twice. Prefilling from
+  // a URL reveals nothing: it is the address they just typed, on their own screen.
+  const { email } = await searchParams;
+  const prefill = email && email.length <= 320 ? email : "";
+
   return (
     <>
       <div className="mb-6 text-center">
@@ -27,6 +36,7 @@ export default function ForgotPage() {
             autoComplete="email"
             required
             autoFocus
+            defaultValue={prefill}
             placeholder="you@example.com"
           />
         </div>

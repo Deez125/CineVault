@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "nav_seen" jsonb DEFAULT '{}'::jsonb NOT NULL;

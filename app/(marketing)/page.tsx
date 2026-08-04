@@ -36,6 +36,10 @@ export default async function HomePage() {
 
   const current = user?.isMember ? user.streamLimit : 0;
 
+  // Admins are members with no tier, so `current` matches nothing and every card would
+  // otherwise invite them to buy something the checkout will refuse them.
+  const isAdmin = Boolean(user?.isAdmin);
+
   return (
     <>
       <SiteHeader
@@ -50,6 +54,10 @@ export default async function HomePage() {
                 isAdmin: user.isAdmin,
                 banned: user.banned,
                 emailVerifiedAt: user.emailVerifiedAt,
+                isMember: user.isMember,
+                streamLimit: user.streamLimit,
+                plexUserId: user.plexUserId,
+                navSeen: user.navSeen,
               }
             : null
         }
@@ -124,7 +132,7 @@ export default async function HomePage() {
 
                   <ul className="mt-5 space-y-2 text-sm">
                     {[
-                      `${tier.streams} user${tier.streams === 1 ? "" : "s"}`,
+                      `${tier.streams} concurrent stream${tier.streams === 1 ? "" : "s"}`,
                       "The full library",
                       "Cancel any time",
                     ].map((feature) => (
@@ -152,14 +160,14 @@ export default async function HomePage() {
                       render={
                         <Link
                           href={
-                            current > 0
+                            isAdmin || current > 0
                               ? "/dashboard/billing"
                               : `/dashboard/billing?price=${encodeURIComponent(tier.priceId)}`
                           }
                         />
                       }
                     >
-                      {current > 0 ? "Switch to this" : "Choose"}
+                      {isAdmin ? "Your plan is Admin" : current > 0 ? "Switch to this" : "Choose"}
                     </Button>
                   )}
                 </div>

@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { PlanChooser } from "./plan-chooser";
 import { BillingClient } from "./billing-client";
 import { FinishingCheckout } from "./finishing-checkout";
+import { AdminPlan } from "./admin-plan";
 import { requireUser } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getTiers } from "@/lib/stripe/tiers";
@@ -23,6 +24,18 @@ export default async function BillingPage({
   if (!user) return null;
 
   const params = await searchParams;
+
+  // Admins do not buy anything, so none of the rest of this page applies to them — no
+  // Stripe lookup, no tiers, no checkout to finish. Checked first so an admin who somehow
+  // has an old subscription still sees the admin plan rather than a bill.
+  if (user.isAdmin) {
+    return (
+      <>
+        <PageHeader title="Billing" subtitle="Your plan" />
+        <AdminPlan />
+      </>
+    );
+  }
 
   const tiers = await getTiers().catch(() => []);
   const subscription = user.stripeCustomerId

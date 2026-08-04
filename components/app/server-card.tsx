@@ -1,8 +1,11 @@
 import Link from "next/link";
-import { CircleCheck, CircleDashed, ExternalLink, Link2 } from "lucide-react";
+import { CircleCheck, CircleDashed, ExternalLink, Link2, ShieldCheck } from "lucide-react";
+// The Plex mark, same as the "Sign in with Plex" button uses.
+import { FaAngleRight } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { User } from "@/lib/db/schema";
+import { formatStreamLimit } from "@/lib/plans";
 
 /**
  * The service card.
@@ -19,6 +22,15 @@ const SERVER_NAME = "CineVault (Server 1)";
 type Status = "ready" | "pending" | "unlinked" | "inactive";
 
 function statusOf(user: User): Status {
+  // Admins are on by their flag, without paying and without waiting for applyEntitlement to
+  // have written is_member. Checked first for the same reason as everywhere else: the column
+  // is derived and can lag, the allowlist cannot.
+  if (user.isAdmin) {
+    // They own the server. There is no share to wait for, so linking Plex is the only thing
+    // that could still be outstanding.
+    return user.plexUsername ? "ready" : "unlinked";
+  }
+
   if (!user.isMember) return "inactive";
   if (!user.plexUsername) return "unlinked";
   return user.shareState === "invited" ? "ready" : "pending";
@@ -59,9 +71,11 @@ export function ServerCard({ user }: { user: User }) {
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold">{SERVER_NAME}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            {user.isMember
-              ? `${user.streamLimit} user${user.streamLimit === 1 ? "" : "s"} at a time`
-              : "No active plan"}
+            {user.isAdmin
+              ? "Unlimited at a time"
+              : user.isMember
+                ? `${formatStreamLimit(user.streamLimit)} at a time`
+                : "No active plan"}
           </p>
         </div>
 
@@ -78,10 +92,13 @@ export function ServerCard({ user }: { user: User }) {
 
       <div className="divide-y">
         <Row label="Plan">
-          {user.isMember ? (
-            <span className="font-medium">
-              {user.streamLimit} user{user.streamLimit === 1 ? "" : "s"}
+          {user.isAdmin ? (
+            <span className="flex items-center gap-1.5 font-medium">
+              <ShieldCheck className="size-4 text-success" />
+              Admin
             </span>
+          ) : user.isMember ? (
+            <span className="font-medium">{formatStreamLimit(user.streamLimit)}</span>
           ) : (
             <span className="text-muted-foreground">None</span>
           )}
@@ -102,7 +119,9 @@ export function ServerCard({ user }: { user: User }) {
         </Row>
 
         <Row label="Library access">
-          {status === "ready" ? (
+          {user.isAdmin ? (
+            <span className="font-medium">You own this server</span>
+          ) : status === "ready" ? (
             <span className="flex items-center gap-1.5 font-medium text-success">
               <CircleCheck className="size-4" />
               Shared with you
@@ -117,7 +136,7 @@ export function ServerCard({ user }: { user: User }) {
 
       {/* One action, chosen by whatever is actually blocking them. */}
       <div className="border-t bg-muted/30 p-4">
-        {status === "inactive" && (
+        {status === "inactive" && !user.isAdmin && (
           <Button size="lg" className="w-full sm:w-auto" render={<Link href="/dashboard/billing" />}>
             Choose a plan
           </Button>
@@ -126,7 +145,9 @@ export function ServerCard({ user }: { user: User }) {
         {status === "unlinked" && (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              Link your Plex account and we&apos;ll invite you straight away.
+              {user.isAdmin
+                ? "Link your Plex account so the app knows who you are there."
+                : "Link your Plex account and we'll invite you straight away."}
             </p>
             <Button size="lg" render={<Link href="/dashboard/plex" />}>
               <Link2 />
@@ -144,9 +165,10 @@ export function ServerCard({ user }: { user: User }) {
         {status === "ready" && (
           <Button
             size="lg"
-            className="w-full sm:w-auto"
+            className="w-full bg-plex text-plex-foreground hover:bg-plex/90 sm:w-auto"
             render={<a href="https://app.plex.tv" target="_blank" rel="noreferrer" />}
           >
+            <FaAngleRight />
             Open Plex
             <ExternalLink />
           </Button>
