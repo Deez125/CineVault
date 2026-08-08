@@ -73,7 +73,9 @@ export default async function HomePage() {
           }}
         />
 
-        <div className="relative mx-auto max-w-6xl px-6 pb-24 pt-20">
+        {/* Vertical rhythm scaled back on small screens. 20/24 units of padding is generous
+            breathing room on a monitor and most of a phone screen spent on nothing. */}
+        <div className="relative mx-auto max-w-6xl px-4 pb-16 pt-12 sm:px-6 sm:pb-24 sm:pt-20">
           <div className="mx-auto max-w-2xl text-center">
             <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
               Lights, Camera, <span className="text-primary">Community.</span>
@@ -177,7 +179,7 @@ export default async function HomePage() {
 
           {/* What the membership actually IS. The tiers above sell a number; this sells the
               reason anyone would want one. */}
-          <div className="mt-16 rounded-xl border bg-card p-8">
+          <div className="mt-12 rounded-xl border bg-card p-6 sm:mt-16 sm:p-8">
             <h2 className="text-center text-lg font-semibold">What&apos;s inside</h2>
 
             <div className="mx-auto mt-7 grid max-w-3xl gap-x-10 gap-y-5 sm:grid-cols-2">

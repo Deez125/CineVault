@@ -42,7 +42,7 @@ export default async function HelpPage() {
     <>
       <SiteHeader user={user} />
 
-      <main className="mx-auto max-w-2xl px-6 py-16">
+      <main className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-16">
         <div className="flex items-center gap-3">
           <span className="flex size-10 items-center justify-center rounded-lg bg-muted">
             <LifeBuoy className="size-5 text-muted-foreground" />

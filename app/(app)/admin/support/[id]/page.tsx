@@ -26,7 +26,9 @@ export default async function AdminTicketPage({ params }: { params: Promise<{ id
   await markRead(ticket.id, true);
 
   return (
-    <div className="flex h-[calc(100dvh-7rem)] flex-col">
+    /* Pinned to the viewport only from `lg`, where the thread goes side-by-side. See the
+       member-facing ticket page for why. */
+    <div className="flex flex-col lg:h-[calc(100dvh-7rem)]">
       <Link
         href="/admin/support"
         className="mb-3 inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"

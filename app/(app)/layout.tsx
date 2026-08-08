@@ -68,7 +68,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <AppSidebar user={user} dots={dots} />
 
       <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        {/* Sticky, so the way back to the navigation is always one tap away. It matters most
+            on a phone, where the sidebar is a sheet and this trigger is the ONLY way to open
+            it — scrolling to the bottom of a long ticket and then having to scroll all the
+            way back up to move anywhere is the kind of small thing that makes a site feel
+            like a desktop page shrunk down.
+
+            Translucent with a blur rather than solid: content passing underneath stays
+            faintly visible, so it reads as a layer over the page instead of a lid on it. */}
+        <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur">
           <SidebarTrigger />
         </header>
 

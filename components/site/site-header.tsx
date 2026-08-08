@@ -11,7 +11,11 @@ import type { SessionUser } from "@/lib/auth/session";
 export function SiteHeader({ user }: { user: SessionUser | null }) {
   return (
     <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-6">
+      {/* Tighter gutters and gap below `sm` only. The row is logo + wordmark + toggle + two
+          buttons, which comes to roughly 344px of content — more than a 375px phone has once
+          24px gutters are taken off each side, so it overflowed. Everything from `sm` up is
+          untouched. */}
+      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6">
         <Link href="/" className="flex items-center gap-2.5">
           <Image
             src="/logo.png"

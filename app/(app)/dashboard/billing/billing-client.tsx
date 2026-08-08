@@ -294,7 +294,7 @@ export function BillingClient({
         </section>
 
       {/* ── Card ───────────────────────────────────────────────────────────── */}
-      <section className="flex items-center justify-between gap-4 rounded-xl border bg-card p-5">
+      <section className="flex flex-col items-start gap-3 rounded-xl border bg-card p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div>
           <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Payment method

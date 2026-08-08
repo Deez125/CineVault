@@ -106,9 +106,12 @@ export function ServerCard({ user }: { user: User }) {
 
         <Row label="Plex account">
           {user.plexUsername ? (
-            <span className="flex items-center gap-1.5 font-medium">
-              <CircleCheck className="size-4 text-success" />
-              {user.plexUsername}
+            // min-w-0 + truncate because this is the one value here that somebody else
+            // chose the length of. A thirty-character Plex username is wider than the space
+            // left beside the label on a phone, and without this it pushes the row out.
+            <span className="flex min-w-0 items-center gap-1.5 font-medium">
+              <CircleCheck className="size-4 shrink-0 text-success" />
+              <span className="truncate">{user.plexUsername}</span>
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -181,7 +184,7 @@ export function ServerCard({ user }: { user: User }) {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
-      <span className="text-muted-foreground">{label}</span>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
       {children}
     </div>
   );

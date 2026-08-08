@@ -7,7 +7,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
       <div className="flex-1">{children}</div>
 
       <footer className="border-t">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-6 text-sm text-muted-foreground">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-6 text-sm text-muted-foreground sm:px-6">
           <span>© {new Date().getFullYear()} CineVault</span>
 
           <nav className="flex flex-wrap items-center gap-5">

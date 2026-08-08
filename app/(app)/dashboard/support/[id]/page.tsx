@@ -22,7 +22,13 @@ export default async function TicketPage({ params }: { params: Promise<{ id: str
   await markRead(ticket.id, false);
 
   return (
-    <div className="flex h-[calc(100dvh-7rem)] flex-col">
+    /* The fixed height only applies from `lg`, which is exactly where TicketThread turns
+       side-by-side. Below that the details panel stacks UNDER the conversation, and pinning
+       the page to the viewport made the two fight over it — on a phone the message list came
+       out a couple of centimetres tall. Unpinned, the thread grows and the page scrolls,
+       which is how a conversation on a phone is meant to behave. Jump-to-newest still works:
+       scrollIntoView scrolls whichever ancestor scrolls, window included. */
+    <div className="flex flex-col lg:h-[calc(100dvh-7rem)]">
       <Link
         href="/dashboard/support"
         className="mb-3 inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
