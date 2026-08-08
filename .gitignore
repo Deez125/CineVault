@@ -25,6 +25,12 @@ env.txt
 coolify.env
 coolify.env.txt
 
+# Session handoff notes. Deliberately NOT committed: this repository is public, and the
+# handoff records operational state — what is not yet enforced, what has no backups, which
+# file holds the live keys. None of it is a credential and all of it is a map. It travels
+# with the project folder instead.
+CLAUDE-HANDOFF.md
+
 # database dumps
 *.db
 *.db-shm
