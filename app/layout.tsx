@@ -1,11 +1,7 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
-import { cn } from "@/lib/utils";
 import "./globals.css";
-
-const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
   title: {
@@ -22,7 +18,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // suppressHydrationWarning is required by next-themes: it sets the theme class on <html>
     // before React hydrates, so the server and client markup legitimately differ by one
     // attribute and React would otherwise warn on every page.
-    <html lang="en" suppressHydrationWarning className={cn(geist.variable)}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      style={{ ["--font-sans" as string]: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
+    >
       <body className="min-h-dvh font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           {children}

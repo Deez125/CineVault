@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   CreditCard,
@@ -31,6 +31,7 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -99,6 +100,21 @@ const ADMIN_NAV: NavItem[] = [
 
 export function AppSidebar({ user, dots }: { user: SessionUser; dots?: NavDots }) {
   const pathname = usePathname();
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  // Close the mobile sheet AFTER the route has actually changed, not during the click that
+  // caused it. Closing in the click handler unmounts the <Link> before its own navigation runs
+  // and the tap lands on nothing. Watching pathname means the sheet closes once the new page
+  // has taken over. Skipped on the first render so opening the sheet on the current page does
+  // not immediately close it.
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (isMobile) setOpenMobile(false);
+  }, [pathname, isMobile, setOpenMobile]);
 
   /**
    * Rows whose dot has been cleared in this browser already.
