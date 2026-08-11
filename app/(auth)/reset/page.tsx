@@ -5,24 +5,28 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthForm } from "@/components/auth/auth-form";
-import { resetPasswordAction, tokenIsLive } from "@/lib/auth/actions";
+import { resetPasswordAction } from "@/lib/auth/actions";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
+import { getSupabaseServer } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Set a new password" };
 
-export default async function ResetPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ token?: string }>;
-}) {
-  const { token } = await searchParams;
+/**
+ * Land here after clicking the password-reset link.
+ *
+ * Under Supabase Auth the exchange has already happened at `/auth/callback`, which stashed a
+ * short-lived recovery session on the request and forwarded here. That session is what
+ * `updateUser({ password })` runs against. If someone opens this page WITHOUT a live
+ * recovery session — a stale bookmark, refreshing hours later, a scanner following the link
+ * — there is no session to update, so we show the same "ask for a fresh link" screen.
+ */
+export default async function ResetPage() {
+  const supabase = await getSupabaseServer();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // Checked here, not only on submit. Otherwise a dead link opens a password form and objects
-  // afterwards, which reads as "the old link still works". Peeking does not spend the token —
-  // mail scanners fetch these before the recipient does.
-  const live = token ? await tokenIsLive(token, "reset_password") : false;
-
-  if (!live) {
+  if (!user) {
     return (
       <>
         <Alert variant="destructive">
@@ -55,10 +59,6 @@ export default async function ResetPage({
         submitLabel="Change password"
         pendingLabel="Changing password"
       >
-        {/* The token rides in the form rather than being read from the URL client-side, so it
-            is never exposed to anything running in the page. */}
-        <input type="hidden" name="token" value={token} />
-
         <div className="space-y-2">
           <Label htmlFor="password">New password</Label>
           <Input

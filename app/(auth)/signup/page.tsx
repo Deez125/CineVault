@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthForm } from "@/components/auth/auth-form";
+import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { signupAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
@@ -51,6 +52,14 @@ export default async function SignupPage({
           </span>
         </div>
       )}
+
+      <OAuthButtons next={params.next} />
+
+      <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
+        <div className="h-px flex-1 bg-border" />
+        <span>or</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
 
       <AuthForm action={signupAction} submitLabel="Create account" pendingLabel="Creating account">
         {params.next && <input type="hidden" name="next" value={params.next} />}

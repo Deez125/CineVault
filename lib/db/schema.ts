@@ -51,14 +51,25 @@ const notNull = (column: string) => sql.raw(`"${column}" IS NOT NULL`);
 export const users = pgTable(
   "users",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * The Supabase Auth user id.
+     *
+     * Every row in `public.users` is a profile hanging off a row in `auth.users`, joined by
+     * this UUID. The FK is added in migration 0010 (Drizzle can't reference tables in the
+     * `auth` schema declaratively); the trigger there inserts a matching row here on every new
+     * auth user. No `defaultRandom()` — the id must come from Supabase.
+     */
+    id: uuid("id").primaryKey(),
 
-    /** Always stored lowercased. Compare lowercased. See lib/auth/. */
+    /**
+     * Lowercased, denormalised from `auth.users.email` and kept in sync by the update trigger.
+     *
+     * We keep our own copy so every query that needs "who is this?" doesn't have to join into
+     * the auth schema, and so the audit log survives the account being deleted.
+     */
     email: text("email").notNull(),
+    /** Mirror of `auth.users.email_confirmed_at`, kept in step by the update trigger. */
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
-
-    /** scrypt, from node:crypto. Format and verification live in lib/auth/password.ts. */
-    passwordHash: text("password_hash").notNull(),
 
     /**
      * Who they are, as they'd like to be called.
@@ -175,112 +186,14 @@ export const users = pgTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// pending_signups
+// Identity is Supabase's — no local tables for it
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Somebody who has filled in the signup form but not yet proved they own the address.
- *
- * They are NOT a user. Nothing here can sign in, be shared with on Plex, hold a subscription
- * or be referred — a row in this table is an intention, and it becomes an account only when
- * the emailed link is opened. Unopened ones are deleted after a day.
- *
- * Kept apart from `users` rather than being a flag on it, because half of this codebase asks
- * "is there a user with this email" and every one of those questions would need to learn about
- * a second kind of user that does not count. A separate table means an unverified signup
- * cannot leak into anything by being forgotten about.
- */
-export const pendingSignups = pgTable(
-  "pending_signups",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-
-    email: text("email").notNull(),
-    /** Already hashed. A pending signup is not a reason to hold a password in the clear. */
-    passwordHash: text("password_hash").notNull(),
-
-    /**
-     * SHA-256 of the emailed token, never the token itself — same rule as email_tokens. A
-     * dump of this table must not hand anybody a working link.
-     */
-    tokenHash: text("token_hash").notNull(),
-
-    /** The invite they arrived through, applied when the account is actually created. */
-    referralCode: text("referral_code"),
-
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    // One pending signup per address. Asking again replaces the old one, so a second attempt
-    // does not leave a stale link working in an older email.
-    uniqueIndex("pending_signups_email_key").on(sql`lower(${t.email})`),
-    uniqueIndex("pending_signups_token_key").on(t.tokenHash),
-    index("pending_signups_expires_idx").on(t.expiresAt),
-  ]
-);
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// sessions
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Sessions are ROWS, not signed cookies.
- *
- * A stateless signed cookie cannot be revoked: changing a password, banning an account, or
- * an admin kicking a stolen session all become "wait for it to expire". Since this app can
- * revoke someone's paid access, we need to be able to revoke their session too.
- *
- * The primary key is the SHA-256 of the token, never the token. The raw token exists only in
- * the user's cookie. If this table leaks, nobody's session is usable.
- */
-export const sessions = pgTable(
-  "sessions",
-  {
-    /** SHA-256 hex of the session token. */
-    id: text("id").primaryKey(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-
-    /** For a "signed in devices" list, and for spotting a session used from somewhere odd. */
-    ip: text("ip"),
-    userAgent: text("user_agent"),
-  },
-  (t) => [index("sessions_user_id_idx").on(t.userId)]
-);
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// email tokens
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Single-use tokens for email verification and password reset.
- *
- * Same rule as sessions: the id is the HASH of the token, and the raw token only ever exists
- * in the email we send. A leak of this table does not let anyone reset a password.
- */
-export const emailTokens = pgTable(
-  "email_tokens",
-  {
-    /** SHA-256 hex of the token. */
-    id: text("id").primaryKey(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-
-    /** verify_email | reset_password */
-    purpose: text("purpose").notNull(),
-
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    /** Set the moment it is redeemed, so a token cannot be used twice. */
-    usedAt: timestamp("used_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("email_tokens_user_id_idx").on(t.userId)]
-);
+//
+// Before the Supabase Auth cutover this file also declared `pending_signups`, `sessions`, and
+// `email_tokens`. All three moved into Supabase's `auth` schema, which owns password hashes,
+// verify-before-signup, JWTs and reset tokens. Migration 0010 drops the tables. Nothing in
+// this codebase should be reaching for them — search for the table name if you see a stray
+// import and it is stale.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // events — the audit log

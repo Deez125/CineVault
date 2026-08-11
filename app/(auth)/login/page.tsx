@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthForm } from "@/components/auth/auth-form";
+import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { ForgotPasswordLink } from "./forgot-link";
 import { loginAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
@@ -15,7 +16,7 @@ export const metadata: Metadata = { title: "Sign in" };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; reset?: string }>;
+  searchParams: Promise<{ next?: string; reset?: string; error?: string }>;
 }) {
   const params = await searchParams;
 
@@ -38,6 +39,23 @@ export default async function LoginPage({
           </AlertDescription>
         </Alert>
       )}
+
+      {params.error && (
+        <Alert variant="destructive" className="mb-4">
+          <TriangleAlert />
+          <AlertDescription>
+            {friendlyOAuthError(params.error)}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <OAuthButtons next={params.next} />
+
+      <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
+        <div className="h-px flex-1 bg-border" />
+        <span>or</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
 
       <AuthForm action={loginAction} submitLabel="Sign in" pendingLabel="Signing in">
         {params.next && <input type="hidden" name="next" value={params.next} />}
@@ -78,4 +96,21 @@ export default async function LoginPage({
       </p>
     </>
   );
+}
+
+/**
+ * Turn one of the query-param errors /auth/callback surfaces into something readable. The
+ * default drops the raw message straight through so a truly novel error is still visible.
+ */
+function friendlyOAuthError(error: string): string {
+  if (error === "missing_code") {
+    return "That sign-in link was incomplete. Try again.";
+  }
+  if (error === "no_user") {
+    return "We couldn't find your account after sign-in. Try again.";
+  }
+  if (/expired/i.test(error)) {
+    return "That link has expired. Ask for a fresh one.";
+  }
+  return error;
 }

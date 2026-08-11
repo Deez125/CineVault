@@ -5,7 +5,6 @@ import { assertEmailConfigured } from "../lib/email";
 import { reconcileAll } from "../lib/reconcile";
 import { enforceStreamLimits } from "../lib/enforce";
 import { refreshRecentlyAdded } from "../lib/plex/recently-added-cache";
-import { pruneExpiredSessions, pruneExpiredSignups } from "../lib/maintenance";
 import { purgeDeadLinks, sweepExpiredLinks } from "../lib/referrals";
 import { pool } from "../lib/db";
 import { logError } from "../lib/events";
@@ -127,13 +126,9 @@ async function runEnforce() {
 }
 
 async function runPrune() {
-  const removed = await pruneExpiredSessions();
-  if (removed > 0) console.log(`  pruned ${removed} expired session(s)`);
-
-  // Signups nobody confirmed. They were never accounts, so nothing else has to be tidied.
-  const signups = await pruneExpiredSignups();
-  if (signups > 0) console.log(`  pruned ${signups} unconfirmed signup(s)`);
-
+  // Sessions and unconfirmed signups are Supabase's problem now — its own retention rules
+  // handle them, and we do not maintain either table any more.
+  //
   // Cosmetic, and deliberately hourly rather than urgent: an out-of-date invite already stops
   // working and already stops holding a slot the moment its timestamp passes. This only makes
   // the list say "Expired" rather than "Waiting" next to a date in the past.

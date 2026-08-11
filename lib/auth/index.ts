@@ -5,7 +5,6 @@ import { getSessionUser, type SessionUser } from "./session";
 import { emailVerificationRequired } from "@/lib/email";
 
 export * from "./session";
-export * from "./password";
 
 /**
  * Guards.

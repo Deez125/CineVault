@@ -29,6 +29,14 @@ const schema = z.object({
    */
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
 
+  // ── Supabase Auth ─────────────────────────────────────────────────────────
+  // Identity lives in Supabase now. The URL and anon key are safe in the browser bundle; the
+  // service-role key is not — anything that lists or bans users needs it, but nothing under a
+  // "use client" boundary may import a module that reads it.
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url("NEXT_PUBLIC_SUPABASE_URL must be a URL"),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: required("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+  SUPABASE_SERVICE_ROLE_KEY: required("SUPABASE_SERVICE_ROLE_KEY"),
+
   // ── Stripe ────────────────────────────────────────────────────────────────
   STRIPE_SECRET_KEY: required("STRIPE_SECRET_KEY"),
   /** From `stripe listen` locally, or the endpoint's signing secret in the dashboard. */

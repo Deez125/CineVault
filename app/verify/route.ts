@@ -1,22 +1,18 @@
 import { redirect } from "next/navigation";
-import { verifyEmailToken } from "@/lib/auth/actions";
 
 /**
- * The link from the confirmation email.
+ * Legacy verify link handler.
  *
- * A route handler rather than a page, and that is not a matter of taste: confirming a signup
- * CREATES the account and signs the person in, and only a route handler or a server action may
- * write the session cookie. As a page this threw on that write — so the link returned a 500
- * *after* the account had been created and the pending row consumed. The visitor saw an error,
- * was not signed in, and clicking again told them the link was dead precisely because it had
- * worked the first time.
+ * Under the previous auth this route claimed a `?token=…` from `email_tokens`, created the
+ * account and signed the person in. Supabase Auth handles all of that itself now — the link
+ * lives at `https://<project>.supabase.co/auth/v1/verify?…` and Supabase redirects the visitor
+ * to `/auth/callback` after confirming.
  *
- * Success goes straight to the dashboard rather than to a "you may now continue" screen. They
- * are signed in by this point, so the account itself is the confirmation.
+ * Kept as a redirect so that any old-format link still in the wild lands on the callback
+ * anyway, where Supabase will refuse the missing code and the visitor lands on /login with a
+ * friendly explanation rather than a 404.
  */
 export async function GET(request: Request) {
-  const token = new URL(request.url).searchParams.get("token");
-  const ok = token ? await verifyEmailToken(token) : false;
-
-  redirect(ok ? "/dashboard" : "/verify/expired");
+  const url = new URL("/auth/callback", request.url);
+  return Response.redirect(url.toString(), 307);
 }

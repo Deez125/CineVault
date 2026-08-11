@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users, type User } from "@/lib/db/schema";
 import { applyEntitlement } from "@/lib/entitlements";
-import { logEvent } from "@/lib/events";
-import { destroyAllSessions } from "@/lib/auth/session";
+import { logEvent, logError } from "@/lib/events";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { plexConfigured } from "@/lib/env";
 import { terminateAllSubscriptions } from "@/lib/stripe/subscription";
 import { grantPlexAccess, revokePlexAccess } from "@/lib/plex/share";
@@ -63,12 +63,37 @@ export async function adminRevoke(user: User, ctx: Ctx) {
 /**
  * Ban. They get nothing even if they pay again.
  *
- * The flag is checked inside applyEntitlement, so a webhook arriving a second later cannot
- * quietly undo it. Their sessions are destroyed too — leaving a banned person signed in
- * means they keep browsing an account that no longer works and open a support ticket about
- * it.
+ * TWO writes here, on purpose:
+ *
+ *   1. Our own `users.banned` flag, checked inside applyEntitlement so a webhook arriving a
+ *      second later cannot quietly undo it.
+ *   2. Supabase Auth's native ban (`ban_duration`), which invalidates every refresh token
+ *      for the user AND makes every future signInWithPassword refuse them. Without this,
+ *      access tokens minted before the ban would keep working until they naturally expired
+ *      (up to the session lifetime), and the banned user could try to log in with only their
+ *      existing password and get a new one.
+ *
+ * The Supabase call happens first. If it fails we do NOT set our column — a ban that only
+ * flipped a flag on our side and left the JWT machinery cheerful is a ban that does not
+ * actually stop anyone.
  */
 export async function adminBan(user: User, reason: string | null, ctx: Ctx) {
+  // 100 years — the longest Postgres timestamptz can hold without overflowing PgBouncer's
+  // handling on some setups. Effectively forever, and clearly not a mistake.
+  const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+    ban_duration: "876000h",
+  });
+  if (banError) {
+    await logError(
+      "ban aborted: supabase.auth.admin.updateUserById failed",
+      { error: banError.message },
+      { userId: user.id, email: user.email, actor: actorOf(ctx) }
+    );
+    throw new AdminActionError(
+      "Could not sign the user out of Supabase — the ban was not applied."
+    );
+  }
+
   await db
     .update(users)
     .set({ banned: true, bannedAt: new Date(), bannedReason: reason, updatedAt: new Date() })
@@ -76,7 +101,6 @@ export async function adminBan(user: User, reason: string | null, ctx: Ctx) {
 
   await terminateAllSubscriptions(user);
   await applyEntitlement(user.id, { actor: actorOf(ctx) });
-  await destroyAllSessions(user.id);
 
   await logEvent({
     type: "user_banned",
@@ -91,6 +115,23 @@ export async function adminBan(user: User, reason: string | null, ctx: Ctx) {
 }
 
 export async function adminUnban(user: User, ctx: Ctx) {
+  // Lift the Supabase ban first, then our flag. Order symmetric to adminBan: if the Supabase
+  // call fails, the person stays locked out of both sides rather than out of one — which is
+  // the recoverable state, not the mystery-half-blocked one.
+  const { error: unbanError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+    ban_duration: "none",
+  });
+  if (unbanError) {
+    await logError(
+      "unban aborted: supabase.auth.admin.updateUserById failed",
+      { error: unbanError.message },
+      { userId: user.id, email: user.email, actor: actorOf(ctx) }
+    );
+    throw new AdminActionError(
+      "Could not lift the Supabase ban — no changes were made."
+    );
+  }
+
   await db
     .update(users)
     .set({ banned: false, bannedAt: null, bannedReason: null, updatedAt: new Date() })

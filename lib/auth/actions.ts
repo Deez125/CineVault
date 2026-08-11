@@ -1,46 +1,34 @@
 "use server";
 
-import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "@/lib/db";
-import { emailTokens, pendingSignups, users } from "@/lib/db/schema";
-import { adminEmails } from "@/lib/env";
+import { env } from "@/lib/env";
 import { logEvent } from "@/lib/events";
-import {
-  emailVerificationRequired,
-  passwordResetEmail,
-  sendEmail,
-  verificationEmail,
-} from "@/lib/email";
 import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
-import { attachReferral } from "@/lib/referrals";
-import {
-  MIN_PASSWORD_LENGTH,
-  fakeVerify,
-  hashPassword,
-  needsRehash,
-  verifyPassword,
-} from "./password";
-import { createSession, destroyAllSessions, destroySession, getSessionUser } from "./session";
+import { getSupabaseServer } from "@/lib/supabase/server";
 
 /**
  * Sign up, sign in, sign out, and password reset.
  *
- * Two principles run through all of it:
+ * Identity is Supabase's now. These actions are thin wrappers that shape a Zod-validated
+ * form into a Supabase call and translate Supabase's specific error codes into the
+ * user-facing messages this app has always shown.
  *
- *   1. **Never confirm whether an email has an account.** Sign-in, signup, and the reset form
- *      all answer the same way whether or not the address is known. Which email addresses
- *      hold a paid Plex subscription is not a list we should hand out to anyone who asks.
+ * Two principles run through all of it, unchanged from before:
  *
- *   2. **Sign-in failures are one message.** "No such user" and "wrong password" are the same
- *      sentence, and both take about the same time (see fakeVerify), because the difference
- *      between them is exactly the information an attacker wants.
+ *   1. **Never confirm whether an email has an account.** Signup and forgot-password answer
+ *      the same regardless of whether the address is known. Supabase's default behaviour is
+ *      to leak this via the error message on signup — we normalise it below.
+ *
+ *   2. **Sign-in failures are one message.** "No such user" and "wrong password" are the
+ *      same sentence, because the difference between them is exactly what an attacker wants.
+ *      Supabase collapses these itself; we make sure we don't accidentally distinguish them.
  */
 
 export type FormState = { error?: string; success?: string } | null;
+
+const MIN_PASSWORD_LENGTH = 8;
 
 const emailSchema = z
   .string()
@@ -49,15 +37,6 @@ const emailSchema = z
   .min(3, "Enter your email address.")
   .max(254)
   .email("That doesn't look like an email address.");
-
-/**
- * How long an unconfirmed signup survives before it is deleted.
- *
- * NOT exported: this is a "use server" module, and such a file may only export async
- * functions. The worker does not need the number anyway — it deletes by comparing
- * expires_at to now, which is the row's own opinion rather than a second copy of the rule.
- */
-const SIGNUP_TTL_MS = 24 * 60 * 60 * 1000;
 
 const passwordSchema = z
   .string()
@@ -70,14 +49,8 @@ const passwordSchema = z
 
 export async function signupAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = z
-    .object({
-      email: emailSchema,
-      password: passwordSchema,
-    })
-    .safeParse({
-      email: formData.get("email"),
-      password: formData.get("password"),
-    });
+    .object({ email: emailSchema, password: passwordSchema })
+    .safeParse({ email: formData.get("email"), password: formData.get("password") });
 
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
@@ -86,173 +59,45 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
   const { email, password } = parsed.data;
   const next = asSafePath(formData.get("next"));
   const ip = await clientIp();
+  const ref = referralCodeFrom(formData.get("ref"));
 
   const limit = rateLimit(`signup:${ip}`, 5, 60 * 60 * 1000);
   if (!limit.allowed) {
     return { error: "Too many accounts from this connection. Try again later." };
   }
 
-  const passwordHash = await hashPassword(password);
-  const referralCode = formData.get("ref");
-  const ref = typeof referralCode === "string" && referralCode.trim() ? referralCode.trim() : null;
+  const supabase = await getSupabaseServer();
 
-  /**
-   * With verification on, signing up creates NOTHING.
-   *
-   * The row goes into `pending_signups`, which cannot sign in, cannot be shared with on Plex,
-   * cannot hold a subscription and cannot be referred. It becomes an account only when the
-   * emailed link is opened, and is deleted after 24 hours if it never is.
-   *
-   * This is also what restores the enumeration disguise. Whether or not the address is
-   * already taken, the answer is the same screen — "check your inbox" — and the only
-   * difference is which message arrives, which is visible solely to whoever owns the address.
-   */
-  if (emailVerificationRequired()) {
-    await beginSignup({ email, passwordHash, ref });
-    redirect(`/check-email?email=${encodeURIComponent(email)}`);
-  }
+  // `emailRedirectTo` is where Supabase sends the visitor after they click the confirm link.
+  // That URL must be listed in the Supabase dashboard under Auth → URL Configuration → Redirect
+  // URLs, otherwise the click 404s. `next` piggybacks through the callback so we land back on
+  // the page they came from.
+  const redirectUrl = new URL("/auth/callback", env.APP_URL);
+  if (next) redirectUrl.searchParams.set("next", next);
 
-  // Verification off: the old behaviour, an account straight away. Kept deliberately as the
-  // way back if sending ever breaks — a signup form that cannot create accounts because an
-  // email provider is down is worse than one that skips a confirmation.
-  const isAdmin = adminEmails().includes(email);
-
-  let userId: string;
-  try {
-    const [created] = await db
-      .insert(users)
-      .values({ email, passwordHash, isAdmin })
-      .returning({ id: users.id });
-    userId = created.id;
-  } catch (err) {
-    if (isUniqueViolation(err)) return duplicateSignup(email);
-    throw err;
-  }
-
-  await logEvent({
-    type: "account_created",
-    userId,
+  const { error } = await supabase.auth.signUp({
     email,
-    actor: "user",
-    message: `${email} created an account`,
+    password,
+    options: {
+      // Referral code goes in `raw_user_meta_data` on the auth user, applied in the callback
+      // once the address is confirmed. Storing the CODE (not the referrer's id) preserves the
+      // single-use-link semantics — a code can only be claimed once, and the reader has to
+      // race for it in attachReferral.
+      data: ref ? { referral_code: ref } : undefined,
+      emailRedirectTo: redirectUrl.toString(),
+    },
   });
 
-  if (ref) await attachReferral({ id: userId, email }, ref);
-
-  await createSession(userId, { ip, userAgent: await clientUserAgent() });
-
-  redirect(next ?? "/dashboard");
-}
-
-/**
- * Start a signup that has not proved itself yet.
- *
- * Never reveals whether the address is already taken. An address with a real account gets the
- * "you already have one" message instead of a link, and an address with an older pending
- * signup simply replaces it — asking twice must not leave two working links in two inboxes.
- *
- * Failures are swallowed on purpose: the caller redirects to the same screen either way, and
- * an error that appears only for addresses that already exist is an enumeration oracle with
- * extra steps.
- */
-async function beginSignup(input: {
-  email: string;
-  passwordHash: string;
-  ref: string | null;
-}): Promise<void> {
-  const { email, passwordHash, ref } = input;
-
-  try {
-    const [existing] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
-
-    if (existing) {
-      await sendEmail({
-        to: email,
-        subject: "You already have a CineVault account",
-        text: [
-          "Someone tried to sign up with this email address, but an account already exists.",
-          "",
-          "If that was you, sign in instead. If you've forgotten your password, use the",
-          "'Forgot password' link on the sign-in page.",
-          "",
-          "If it wasn't you, nothing has changed and you can ignore this.",
-        ].join("\n"),
-      });
-      return;
+  // Supabase returns { data: { user: null }, error: null } for the "email already registered"
+  // case when confirm-email is on. Which is exactly the enumeration protection we want: the
+  // form's answer for a known email and an unknown one is identical — "check your inbox".
+  if (error) {
+    // The specific "already registered" shape can still leak on some Supabase configurations;
+    // fold it into the neutral response below just in case. All other errors surface.
+    if (error.status === 422 || /already/i.test(error.message)) {
+      redirect(`/check-email?email=${encodeURIComponent(email)}`);
     }
-
-    const token = crypto.randomBytes(32).toString("base64url");
-
-    await db
-      .delete(pendingSignups)
-      .where(sql`lower(${pendingSignups.email}) = lower(${email})`);
-
-    await db.insert(pendingSignups).values({
-      email,
-      passwordHash,
-      tokenHash: tokenHash(token),
-      referralCode: ref,
-      expiresAt: new Date(Date.now() + SIGNUP_TTL_MS),
-    });
-
-    await sendEmail(verificationEmail(email, token));
-  } catch (err) {
-    console.error(
-      "[signup] could not start a pending signup:",
-      err instanceof Error ? err.message : err
-    );
-  }
-}
-
-
-
-/**
- * Somebody tried to sign up with an address that already has an account.
- *
- * What we say depends on whether verification is on, and the difference is not cosmetic.
- *
- * WITH verification, both outcomes look identical — "check your email" — and the owner of the
- * address gets a message explaining. The form tells a stranger nothing.
- *
- * WITHOUT it, that disguise cannot work. A successful signup signs you straight in, so
- * ANYTHING else is already a signal that the address is taken; a fake "check your email"
- * would leak exactly as much while also stranding the real owner on a page waiting for a
- * message that will never arrive. So we say it plainly and point at the way forward.
- *
- * The honest summary: with no mail provider, this form can be used to test whether an address
- * has an account here. That is the cost of removing verification, it is bounded by the signup
- * rate limit, and it goes away when sending is wired up.
- */
-async function duplicateSignup(email: string): Promise<FormState> {
-  if (!emailVerificationRequired()) {
-    return {
-      error: "An account already exists with that email. Sign in instead, or reset your password.",
-    };
-  }
-
-  const [existing] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
-
-  if (existing) {
-    await sendEmail({
-      to: email,
-      subject: "You already have a CineVault account",
-      text: [
-        "Someone tried to sign up with this email address, but an account already exists.",
-        "",
-        "If that was you, sign in instead. If you've forgotten your password, use the",
-        "'Forgot password' link on the sign-in page.",
-        "",
-        "If it wasn't you, nothing has changed and you can ignore this.",
-      ].join("\n"),
-    });
+    return { error: friendlyAuthError(error.message) };
   }
 
   redirect(`/check-email?email=${encodeURIComponent(email)}`);
@@ -262,7 +107,6 @@ async function duplicateSignup(email: string): Promise<FormState> {
 // Sign in
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** One message for every failure. See principle 2 above. */
 const BAD_CREDENTIALS = "That email and password don't match.";
 
 export async function loginAction(_prev: FormState, formData: FormData): Promise<FormState> {
@@ -277,9 +121,10 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   const { email, password } = parsed.data;
   const next = asSafePath(formData.get("next"));
 
-  // Limited per account AND per connection. Per-account alone lets an attacker lock out a
-  // real customer by guessing at their address; per-connection alone lets a botnet spread the
-  // guessing across many addresses and never trip either.
+  // Rate limits ON TOP OF Supabase's own. Ours are per-account and per-connection: per-account
+  // alone lets an attacker lock out a real customer by guessing at their address; per-connection
+  // alone lets a botnet spread the guesses across many addresses. Both together bound the game
+  // in both directions.
   const ip = await clientIp();
   const byAccount = rateLimit(`login:acct:${email}`, 10, 15 * 60 * 1000);
   const byIp = rateLimit(`login:ip:${ip}`, 30, 15 * 60 * 1000);
@@ -288,39 +133,27 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
     return { error: "Too many attempts. Wait a few minutes and try again." };
   }
 
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  const supabase = await getSupabaseServer();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-  if (!user) {
-    await fakeVerify();
+  if (error) {
+    // Supabase's ban feature (admin.updateUserById with ban_duration) makes signIn fail with
+    // this specific message. We surface it plainly — a paying customer suddenly locked out
+    // deserves to know the reason isn't a typo.
+    if (/banned|blocked/i.test(error.message) || error.status === 403) {
+      return { error: "This account has been banned. Contact support if you think that's a mistake." };
+    }
     return { error: BAD_CREDENTIALS };
-  }
-
-  if (!(await verifyPassword(password, user.passwordHash))) {
-    return { error: BAD_CREDENTIALS };
-  }
-
-  // Opportunistic upgrade when the cost parameters have been raised since they last signed
-  // in. This is the only moment we hold the plaintext, so it is the only moment it can
-  // happen without asking them to reset.
-  if (needsRehash(user.passwordHash)) {
-    await db
-      .update(users)
-      .set({ passwordHash: await hashPassword(password), updatedAt: new Date() })
-      .where(eq(users.id, user.id));
   }
 
   resetRateLimit(`login:acct:${email}`);
-
-  // A banned account still gets a session. requireUser() sends them to a page that explains
-  // what happened, which is better than rejecting a password they know is correct and
-  // leaving them to guess why.
-  await createSession(user.id, { ip, userAgent: await clientUserAgent() });
 
   redirect(next ?? "/dashboard");
 }
 
 export async function logoutAction(): Promise<void> {
-  await destroySession();
+  const supabase = await getSupabaseServer();
+  await supabase.auth.signOut();
   redirect("/");
 }
 
@@ -328,62 +161,79 @@ export async function logoutAction(): Promise<void> {
 // Password reset
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function requestResetAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function requestResetAction(
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
   const parsed = emailSchema.safeParse(formData.get("email"));
 
-  // Even a malformed address gets the neutral answer, so the form never becomes a way to
-  // check whether an address is registered.
+  // Even a malformed address gets the neutral answer so the form never becomes an
+  // enumeration oracle.
   const neutral: FormState = {
     success: "If that address has an account, a reset link is on its way.",
   };
 
   if (!parsed.success) return neutral;
-
   const email = parsed.data;
 
-  const limit = rateLimit(`reset:${email}`, 3, 60 * 60 * 1000);
+  const limit = rateLimit(`reset:${email}`, 20, 60 * 60 * 1000);
   if (!limit.allowed) return neutral;
 
-  const [user] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
+  const supabase = await getSupabaseServer();
 
-  if (user) {
-    const token = await issueToken(user.id, "reset_password", 60 * 60 * 1000);
-    await sendEmail(passwordResetEmail(email, token));
-  }
+  // Route the reset link through /auth/callback (which knows how to exchange the PKCE code
+  // for a session) with next=/reset. Pointing straight at /reset skipped that exchange —
+  // the visitor arrived with a code but no live session, so the page's getUser() returned
+  // null and rendered the "expired link" screen for a perfectly good link.
+  const callback = new URL("/auth/callback", env.APP_URL);
+  callback.searchParams.set("next", "/reset");
+
+  await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: callback.toString(),
+  });
 
   return neutral;
 }
 
-export async function resetPasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
-  const parsed = z
-    .object({ token: z.string().min(1), password: passwordSchema })
-    .safeParse({ token: formData.get("token"), password: formData.get("password") });
-
+/**
+ * Set a new password, on a page reached through the reset link.
+ *
+ * Supabase's recovery link lands the visitor on `/reset` with a short-lived session that only
+ * permits `updateUser({ password })`. The action runs against that session — there is no
+ * separate "token" to redeem here as in the previous build, because Supabase burned the token
+ * on the way in.
+ */
+export async function resetPasswordAction(
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
+  const parsed = passwordSchema.safeParse(formData.get("password"));
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
   }
 
-  const record = await consumeToken(parsed.data.token, "reset_password");
-  if (!record) {
+  const supabase = await getSupabaseServer();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
     return { error: "That link has expired or has already been used. Ask for a new one." };
   }
 
-  await db
-    .update(users)
-    .set({ passwordHash: await hashPassword(parsed.data.password), updatedAt: new Date() })
-    .where(eq(users.id, record.userId));
+  const { error } = await supabase.auth.updateUser({ password: parsed.data });
+  if (error) return { error: friendlyAuthError(error.message) };
 
-  // Every existing session dies. A reset that leaves the thief's session alive has not
-  // actually locked anybody out, which is the entire point of resetting.
-  await destroyAllSessions(record.userId);
+  // The password change already invalidated other refresh tokens via Supabase; sign this
+  // session out too so the visitor arrives at the login page with a clean slate and a
+  // password they just chose.
+  await supabase.auth.signOut();
 
   await logEvent({
     type: "admin_action",
-    userId: record.userId,
+    userId: user.id,
+    email: user.email ?? undefined,
     actor: "user",
     message: "password was reset",
   });
@@ -392,251 +242,67 @@ export async function resetPasswordAction(_prev: FormState, formData: FormData):
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Email verification
+// Verification-email resend (shown on /check-email)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export async function verifyEmailToken(token: string): Promise<boolean> {
-  // A pending signup first. That is the common case now: most links are somebody finishing
-  // signing up, not an existing member confirming a changed address.
-  if (await completeSignup(token)) return true;
-
-  const record = await consumeToken(token, "verify_email");
-  if (!record) return false;
-
-  await db
-    .update(users)
-    .set({ emailVerifiedAt: new Date(), updatedAt: new Date() })
-    .where(eq(users.id, record.userId));
-
-  return true;
-}
-
-/**
- * Turn a pending signup into a real account, and sign them in.
- *
- * This is where an account is actually created under the verify-first flow, which means it is
- * the one place that has to get several things right at once:
- *
- *   - The row is DELETED as part of claiming it, and the delete is what decides the winner.
- *     Two clicks on the same link race here, and only the one whose delete returns a row goes
- *     on to create an account. Checking first and deleting after would create two.
- *   - Expiry is judged from the row, so a link that outlived its day fails even if the sweep
- *     has not run yet.
- *   - The referral is applied here rather than at signup, because there was nobody to attach
- *     it to until now.
- *   - Admin status still comes from the allowlist, never from anything the form carried.
- */
-async function completeSignup(token: string): Promise<boolean> {
-  const [claimed] = await db
-    .delete(pendingSignups)
-    .where(eq(pendingSignups.tokenHash, tokenHash(token)))
-    .returning();
-
-  if (!claimed) return false;
-  if (claimed.expiresAt.getTime() <= Date.now()) return false;
-
-  const isAdmin = adminEmails().includes(claimed.email);
-
-  let userId: string;
-  try {
-    const [created] = await db
-      .insert(users)
-      .values({
-        email: claimed.email,
-        passwordHash: claimed.passwordHash,
-        isAdmin,
-        // Confirmed by definition: opening this link is the proof.
-        emailVerifiedAt: new Date(),
-      })
-      .returning({ id: users.id });
-    userId = created.id;
-  } catch (err) {
-    // Somebody registered that address in the meantime. The pending row is already gone,
-    // which is right — it is no longer wanted either way.
-    if (isUniqueViolation(err)) return false;
-    throw err;
-  }
-
-  await logEvent({
-    type: "account_created",
-    userId,
-    email: claimed.email,
-    actor: "user",
-    message: `${claimed.email} created an account`,
-  });
-
-  if (claimed.referralCode) {
-    await attachReferral({ id: userId, email: claimed.email }, claimed.referralCode);
-  }
-
-  await createSession(userId, { ip: await clientIp(), userAgent: await clientUserAgent() });
-
-  return true;
-}
-
-
-/**
- * Send the confirmation link again, from the "check your inbox" screen.
- *
- * Takes an address rather than a session, because the whole point is that nobody is signed
- * in yet. That makes it an enumeration risk by construction, so it is answered identically
- * whatever the address turns out to be — no account, a pending signup, or a real one — and
- * rate limited per address so it cannot be used to hammer somebody's inbox either.
- */
-export async function resendSignupAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function resendSignupAction(
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
   const parsed = emailSchema.safeParse(formData.get("email"));
-  const same = { success: "Sent. Check your inbox, including spam." };
+  const same: FormState = { success: "Sent. Check your inbox, including spam." };
 
   if (!parsed.success) return same;
   const email = parsed.data;
 
-  if (!rateLimit(`resend-signup:${email}`, 3, 15 * 60 * 1000).allowed) {
-    return { error: "We've sent a few already. Check your spam folder, then try again shortly." };
+  if (!rateLimit(`resend-signup:${email}`, 20, 15 * 60 * 1000).allowed) {
+    return {
+      error: "We've sent a few already. Check your spam folder, then try again shortly.",
+    };
   }
 
-  const [pending] = await db
-    .select()
-    .from(pendingSignups)
-    .where(sql`lower(${pendingSignups.email}) = lower(${email})`)
-    .limit(1);
+  const supabase = await getSupabaseServer();
+  const redirectUrl = new URL("/auth/callback", env.APP_URL).toString();
 
-  if (!pending) {
-    // No pending signup. There may still be a real account that never confirmed — the
-    // backstop in requireUser redirects those here, and a button that silently did nothing
-    // for them would be worse than not showing one.
-    const [unverified] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.email, email), isNull(users.emailVerifiedAt)))
-      .limit(1);
-
-    if (unverified) {
-      try {
-        await sendEmail(
-          verificationEmail(email, await issueToken(unverified.id, "verify_email", SIGNUP_TTL_MS))
-        );
-      } catch (err) {
-        console.error("[signup] resend failed:", err instanceof Error ? err.message : err);
-      }
-    }
-
-    // Either way — unknown address, real account, or nothing at all — the same answer.
-    return same;
-  }
-
-  try {
-    // A NEW token, and the old one dies with it. Two live links in two emails is a way to
-    // wonder later which of them was clicked.
-    const token = crypto.randomBytes(32).toString("base64url");
-
-    await db
-      .update(pendingSignups)
-      .set({ tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + SIGNUP_TTL_MS) })
-      .where(eq(pendingSignups.id, pending.id));
-
-    await sendEmail(verificationEmail(email, token));
-  } catch (err) {
-    console.error("[signup] resend failed:", err instanceof Error ? err.message : err);
-  }
+  // The neutral answer applies whether the address exists or not. Supabase does not error
+  // on a resend for a nonexistent address, so this works out of the box.
+  await supabase.auth.resend({
+    type: "signup",
+    email,
+    options: { emailRedirectTo: redirectUrl },
+  });
 
   return same;
 }
 
+/**
+ * Resend the confirmation email for an already-signed-in-but-unverified user. Kept for
+ * parity with the previous build's UX, though under Supabase the /check-email screen is
+ * usually reached BEFORE signing in.
+ */
 export async function resendVerificationAction(): Promise<FormState> {
-  const session = await getSessionUser();
-  if (!session) return { error: "Sign in first." };
-  if (!emailVerificationRequired()) return { success: "Email confirmation isn't in use." };
-  if (session.emailVerifiedAt) return { success: "Your email is already confirmed." };
+  const supabase = await getSupabaseServer();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const limit = rateLimit(`verify:${session.id}`, 3, 60 * 60 * 1000);
+  if (!user) return { error: "Sign in first." };
+  if (user.email_confirmed_at) return { success: "Your email is already confirmed." };
+
+  const limit = rateLimit(`verify:${user.id}`, 20, 60 * 60 * 1000);
   if (!limit.allowed) {
-    return { error: "We've sent a few already. Check your spam folder, then try again later." };
+    return {
+      error: "We've sent a few already. Check your spam folder, then try again later.",
+    };
   }
 
-  await issueVerificationEmail(session.id, session.email);
-  return { success: "Sent. Check your inbox." };
-}
-
-async function issueVerificationEmail(userId: string, email: string): Promise<void> {
-  const token = await issueToken(userId, "verify_email", 24 * 60 * 60 * 1000);
-  await sendEmail(verificationEmail(email, token));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Tokens
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const tokenHash = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
-
-/**
- * Mint a single-use token and return the RAW value, which only ever travels in the email.
- * The database stores its hash, so a leak of email_tokens cannot be used to reset anybody.
- */
-async function issueToken(userId: string, purpose: string, ttlMs: number): Promise<string> {
-  const token = crypto.randomBytes(32).toString("base64url");
-
-  // One live token per purpose. Otherwise every "resend" leaves another working key sitting
-  // in another inbox, and the oldest one still opens the door.
-  await db
-    .delete(emailTokens)
-    .where(and(eq(emailTokens.userId, userId), eq(emailTokens.purpose, purpose)));
-
-  await db.insert(emailTokens).values({
-    id: tokenHash(token),
-    userId,
-    purpose,
-    expiresAt: new Date(Date.now() + ttlMs),
+  await supabase.auth.resend({
+    type: "signup",
+    email: user.email!,
+    options: { emailRedirectTo: new URL("/auth/callback", env.APP_URL).toString() },
   });
 
-  return token;
-}
-
-/**
- * Is this token live — without spending it?
- *
- * For deciding whether to show somebody a form at all. A dead link that renders a password
- * field and only objects after they have chosen one reads as broken, and it is the reason a
- * superseded link "still works": the page opens, so it looks accepted, when in fact the submit
- * behind it was always going to be refused.
- *
- * Deliberately does NOT consume. Mail clients and security scanners fetch links before anybody
- * clicks them, and a check that burned the token would mean the real person always arrives to
- * a dead one.
- */
-export async function tokenIsLive(token: string, purpose: string): Promise<boolean> {
-  const [row] = await db
-    .select({ expiresAt: emailTokens.expiresAt })
-    .from(emailTokens)
-    .where(
-      and(
-        eq(emailTokens.id, tokenHash(token)),
-        eq(emailTokens.purpose, purpose),
-        isNull(emailTokens.usedAt)
-      )
-    )
-    .limit(1);
-
-  return Boolean(row) && row.expiresAt.getTime() > Date.now();
-}
-
-/** Redeem a token, atomically, exactly once. */
-async function consumeToken(token: string, purpose: string): Promise<{ userId: string } | null> {
-  const id = tokenHash(token);
-
-  // `used_at IS NULL` in the WHERE clause is what makes this single-use: two requests racing
-  // with the same token both try to update, and only one of them matches a row.
-  const [claimed] = await db
-    .update(emailTokens)
-    .set({ usedAt: new Date() })
-    .where(
-      and(eq(emailTokens.id, id), eq(emailTokens.purpose, purpose), isNull(emailTokens.usedAt))
-    )
-    .returning({ userId: emailTokens.userId, expiresAt: emailTokens.expiresAt });
-
-  if (!claimed) return null;
-  if (claimed.expiresAt.getTime() <= Date.now()) return null;
-
-  return { userId: claimed.userId };
+  return { success: "Sent. Check your inbox." };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -648,38 +314,33 @@ async function clientIp(): Promise<string> {
   );
 }
 
-async function clientUserAgent(): Promise<string | null> {
-  return (await headers()).get("user-agent");
-}
-
 /**
  * A `next=` parameter that is safe to redirect to.
  *
  * Must be a path on this site. Accepting an absolute URL here is a classic open redirect: an
- * attacker sends `/login?next=https://evil.example`, the victim signs in for real, lands on a
- * convincing copy of this site, and types their password into it.
+ * attacker sends `/login?next=https://evil.example`, the victim signs in for real, and lands
+ * on a convincing copy of this site that harvests their password.
  */
 function asSafePath(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return null;
   return value;
 }
 
+function referralCodeFrom(value: FormDataEntryValue | null): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 /**
- * Postgres unique-violation (SQLSTATE 23505), anywhere in the cause chain.
+ * Translate a Supabase auth-error message into something a member should read.
  *
- * Drizzle wraps driver errors in a DrizzleQueryError and hangs the real one off `cause`, so
- * checking `err.code` alone never matches and the exception escapes as a 500. That is exactly
- * what happened the first time this ran: a duplicate signup returned a stack trace instead of
- * the neutral "check your email" page, which both looks broken AND leaks that the address is
- * already registered.
+ * Falls through to the raw message rather than a generic string, so a truly novel error
+ * still surfaces in the UI — we just want to avoid the ones whose default wording is either
+ * an implementation detail ("row not found") or an enumeration leak.
  */
-function isUniqueViolation(err: unknown): boolean {
-  let current: unknown = err;
-
-  for (let depth = 0; current && depth < 5; depth += 1) {
-    if (typeof current === "object" && "code" in current && current.code === "23505") return true;
-    current = (current as { cause?: unknown }).cause;
+function friendlyAuthError(message: string): string {
+  if (/rate/i.test(message)) return "Too many attempts. Wait a few minutes and try again.";
+  if (/network|fetch/i.test(message)) {
+    return "Couldn't reach the sign-in service. Try again in a moment.";
   }
-
-  return false;
+  return message;
 }

@@ -11,12 +11,15 @@ import { cancelImmediately } from "@/lib/stripe/subscription";
 import { revokePlexAccess } from "@/lib/plex/share";
 import { isProtected } from "@/lib/plex/protected";
 import { plexConfigured } from "@/lib/env";
-import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from "./password";
 import { USERNAME_MAX, checkUsername } from "@/lib/display-name";
-import { destroyAllSessions, destroySession, getCurrentUser } from "./session";
+import { getCurrentUser } from "./session";
+import { getSupabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { FormState } from "./actions";
 
 /** Account settings: name, password, and closing the account. */
+
+const MIN_PASSWORD_LENGTH = 8;
 
 export async function updateProfileAction(
   _prev: FormState,
@@ -43,8 +46,8 @@ export async function updateProfileAction(
 
   const { firstName, lastName, username } = parsed.data;
 
-  // Empty clears it. Only validate the shape when there is something to validate, or
-  // somebody who never wanted a username could never save their first name either.
+  // Empty clears it. Only validate the shape when there is something to validate, or somebody
+  // who never wanted a username could never save their first name either.
   if (username) {
     const problem = checkUsername(username);
     if (problem) return { error: problem };
@@ -86,6 +89,19 @@ function isUniqueViolation(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Change password from the account settings page.
+ *
+ * The current password is required even though the visitor is already signed in — a borrowed
+ * laptop with a live session must not be enough to lock the real owner out. Supabase's SDK
+ * has no "verify current password" primitive, so we reauthenticate by attempting a fresh
+ * sign-in with the address on the session and the current password; failure is treated as
+ * an incorrect current password.
+ *
+ * After the change every OTHER refresh token is invalidated by Supabase itself; the caller
+ * stays signed in on this device because updateUser refreshes the current session's tokens
+ * as part of the same call.
+ */
 export async function changePasswordAction(
   _prev: FormState,
   formData: FormData
@@ -107,23 +123,21 @@ export async function changePasswordAction(
     return { error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
   }
 
-  // The current password is required even though they are already signed in. A borrowed
-  // laptop with a live session should not be enough to lock the real owner out.
-  if (!(await verifyPassword(parsed.data.current, user.passwordHash))) {
+  const supabase = await getSupabaseServer();
+
+  // Reauthenticate. signInWithPassword succeeds without writing to state — it just returns
+  // the tokens — but we don't have to persist them; the current session on this call is
+  // already the one we care about, and it will pick up the new password below.
+  const { error: verifyError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: parsed.data.current,
+  });
+  if (verifyError) {
     return { error: "That's not your current password." };
   }
 
-  await db
-    .update(users)
-    .set({ passwordHash: await hashPassword(parsed.data.next), updatedAt: new Date() })
-    .where(eq(users.id, user.id));
-
-  // Every other session dies, including whoever prompted the change. Ours is reissued below
-  // so they are not signed out of the device they are using.
-  await destroyAllSessions(user.id);
-
-  const { createSession } = await import("./session");
-  await createSession(user.id);
+  const { error } = await supabase.auth.updateUser({ password: parsed.data.next });
+  if (error) return { error: error.message };
 
   await logEvent({
     type: "admin_action",
@@ -145,7 +159,7 @@ export async function changePasswordAction(
  *      whose account no longer exists, and nobody notices until the chargeback.
  *   2. Revoke the Plex share. It must happen while we still know their Plex username, so it
  *      cannot wait until after the row is gone.
- *   3. Delete the row.
+ *   3. Delete the auth.users row. The FK cascade removes public.users too.
  *
  * If step 1 or 2 fails, we stop and delete nothing. A half-deleted account that is still
  * being charged is far worse than one that is still there.
@@ -162,8 +176,15 @@ export async function deleteAccountAction(
     return { error: "Type your email address exactly to confirm." };
   }
 
+  // Reauthenticate with the current password before doing anything destructive. Same reason
+  // as changePassword: a live session on a borrowed device must not be a delete button.
   const password = String(formData.get("password") ?? "");
-  if (!(await verifyPassword(password, user.passwordHash))) {
+  const supabase = await getSupabaseServer();
+  const { error: verifyError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password,
+  });
+  if (verifyError) {
     return { error: "That password isn't right." };
   }
 
@@ -198,8 +219,8 @@ export async function deleteAccountAction(
     };
   }
 
-  // Logged BEFORE the delete. The event's user_id is set null by the foreign key, and the
-  // denormalised email and Plex username are what keep the record readable afterwards.
+  // Logged BEFORE the delete. The event's user_id is set null by the foreign key on cascade,
+  // and the denormalised email and Plex username are what keep the record readable afterwards.
   await logEvent({
     type: "membership_lost",
     severity: "warn",
@@ -211,8 +232,20 @@ export async function deleteAccountAction(
     detail: { deleted: true },
   });
 
-  await db.delete(users).where(eq(users.id, user.id));
-  await destroySession();
+  // Delete on the AUTH side; the FK from public.users(id) → auth.users(id) with ON DELETE
+  // CASCADE removes our profile row automatically. Doing it in this order also invalidates
+  // every session Supabase issued — a stale cookie can't outlive the identity it referred to.
+  const { error } = await supabaseAdmin.auth.admin.deleteUser(user.id);
+  if (error) {
+    await logError(
+      "account deletion failed at supabase.auth.admin.deleteUser",
+      { error: error.message },
+      { userId: user.id, email: user.email, actor: "user" }
+    );
+    return {
+      error: "Something went wrong deleting the account. Try again shortly, or contact support.",
+    };
+  }
 
   redirect("/?deleted=1");
 }
