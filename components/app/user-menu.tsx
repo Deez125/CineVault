@@ -23,8 +23,17 @@ export function UserMenu({ user }: { user: SessionUser }) {
         className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50"
         aria-label="Account menu"
       >
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-          {initial(user)}
+        <span className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+          {user.avatarUrl ? (
+            // Regular <img>, not next/image: the source is a Supabase Storage URL that
+            // rotates with a cache-busting timestamp on every re-upload, and the optimizer
+            // would either miss those updates (cached transform) or add a hop that doesn't
+            // pay for itself on a 28px thumbnail.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={user.avatarUrl} alt="" className="size-full object-cover" />
+          ) : (
+            initial(user)
+          )}
         </span>
         <span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
           {label}

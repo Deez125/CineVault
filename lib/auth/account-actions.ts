@@ -15,6 +15,11 @@ import { USERNAME_MAX, checkUsername } from "@/lib/display-name";
 import { getCurrentUser } from "./session";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import {
+  avatarErrorMessage,
+  uploadAvatar,
+  validateAvatarFile,
+} from "@/lib/avatar";
 import type { FormState } from "./actions";
 
 /** Account settings: name, password, and closing the account. */
@@ -75,6 +80,49 @@ export async function updateProfileAction(
 
   revalidatePath("/dashboard/settings");
   return { success: "Saved." };
+}
+
+/**
+ * Change the profile picture from the settings page.
+ *
+ * A separate action from updateProfileAction because the file input UX submits on select
+ * rather than waiting for a Save button, and mixing that flow with the name/username form's
+ * submit-on-save would either double-post or make the picture change silently on cancel.
+ */
+export async function updateAvatarAction(
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
+  const user = await getCurrentUser();
+  if (!user) return { error: "Sign in first." };
+
+  const file = formData.get("avatar");
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: "Choose an image to upload." };
+  }
+
+  const problem = validateAvatarFile(file);
+  if (problem) return { error: avatarErrorMessage(problem) };
+
+  let avatarUrl: string;
+  try {
+    avatarUrl = await uploadAvatar(user.id, file);
+  } catch (err) {
+    await logError(
+      "avatar upload failed at /dashboard/settings",
+      { error: err instanceof Error ? err.message : String(err) },
+      { userId: user.id, actor: "user" }
+    );
+    return { error: "We couldn't save that photo. Try again in a moment." };
+  }
+
+  await db
+    .update(users)
+    .set({ avatarUrl, updatedAt: new Date() })
+    .where(eq(users.id, user.id));
+
+  revalidatePath("/dashboard/settings");
+  return { success: "Photo updated." };
 }
 
 /** SQLSTATE 23505, anywhere in the cause chain. Drizzle wraps the driver's error. */

@@ -30,9 +30,14 @@ export type SessionUser = Pick<
   | "firstName"
   | "lastName"
   | "username"
+  // Rendered in the sidebar and everywhere else a face appears — null means the initial
+  // placeholder is drawn instead.
+  | "avatarUrl"
   | "isAdmin"
   | "banned"
   | "emailVerifiedAt"
+  // Written by the /setup screen; the proxy sends the visitor there whenever this is false.
+  | "setupComplete"
   // Derived and written only by applyEntitlement; read-only everywhere else.
   | "isMember"
   | "streamLimit"
@@ -63,9 +68,11 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       firstName: users.firstName,
       lastName: users.lastName,
       username: users.username,
+      avatarUrl: users.avatarUrl,
       isAdmin: users.isAdmin,
       banned: users.banned,
       emailVerifiedAt: users.emailVerifiedAt,
+      setupComplete: users.setupComplete,
       isMember: users.isMember,
       streamLimit: users.streamLimit,
       plexUserId: users.plexUserId,

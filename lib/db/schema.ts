@@ -87,8 +87,24 @@ export const users = pgTable(
      */
     username: text("username"),
 
-    /** Reserved for a profile picture. Nothing writes it yet. */
+    /**
+     * The user's profile picture, served from Supabase Storage.
+     *
+     * Public URL, so it can be dropped into an `<img src>` without a signed-url dance. The
+     * bucket is `avatars`, one file per user at `<user_id>/avatar.<ext>`. Null means the
+     * placeholder (initial-in-a-circle in the UI) is shown instead.
+     */
     avatarUrl: text("avatar_url"),
+
+    /**
+     * Whether the user has completed the /setup step (name, username, avatar).
+     *
+     * The proxy sends any signed-in visitor with this false to /setup, whatever page they
+     * were trying to reach — so gathering these is not something individual pages have to
+     * remember to guard for. Every signup starts false, including OAuth ones that arrived
+     * with a Google display name, so the invariant "everybody chose their own username" holds.
+     */
+    setupComplete: boolean("setup_complete").notNull().default(false),
 
     /**
      * When this member last opened each sidebar section, keyed by href.

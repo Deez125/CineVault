@@ -23,15 +23,17 @@ import {
   deleteAccountAction,
   updateProfileAction,
 } from "@/lib/auth/account-actions";
-import { USERNAME_MAX, USERNAME_MIN, initial } from "@/lib/display-name";
+import { USERNAME_MAX, USERNAME_MIN } from "@/lib/display-name";
 import { resendVerificationAction } from "@/lib/auth/actions";
 import type { FormState } from "@/lib/auth/actions";
+import { AvatarField } from "./avatar-field";
 
 export function SettingsClient({
   email,
   firstName,
   lastName,
   username,
+  avatarUrl,
   emailVerified,
   showVerification,
   isMember,
@@ -40,6 +42,7 @@ export function SettingsClient({
   firstName: string | null;
   lastName: string | null;
   username: string | null;
+  avatarUrl: string | null;
   emailVerified: boolean;
   showVerification: boolean;
   isMember: boolean;
@@ -49,23 +52,10 @@ export function SettingsClient({
   return (
     <div className="space-y-5">
       <Section title="Profile">
-        <div className="mb-6 flex items-center gap-4">
-          {/* The slot a profile picture will live in. Not a button, and it does not pretend
-              to be one: an upload control that silently does nothing is worse than an
-              obvious placeholder. */}
-          <div
-            className="flex size-16 shrink-0 items-center justify-center rounded-full bg-muted text-xl font-semibold text-muted-foreground"
-            aria-hidden
-          >
-            {initial({ username, firstName, lastName, email })}
-          </div>
-          <div>
-            <p className="text-sm font-medium">Profile picture</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Coming later. For now this is the first letter of your name.
-            </p>
-          </div>
-        </div>
+        <AvatarField
+          avatarUrl={avatarUrl}
+          user={{ email, firstName, lastName, username }}
+        />
 
         <ActionForm action={updateProfileAction} submit="Save">
           <div className="grid gap-4 sm:grid-cols-2">

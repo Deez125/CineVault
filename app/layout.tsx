@@ -23,7 +23,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
       style={{ ["--font-sans" as string]: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}
     >
-      <body className="min-h-dvh font-sans antialiased">
+      {/* suppressHydrationWarning on <body> too — some browser extensions (ColorZilla,
+          ad blockers, translation tools) inject attributes on body before React hydrates,
+          which triggers a legitimate but noisy console warning on every render. Not our
+          bug, not fixable in our code; suppressing it here is the standard escape. */}
+      <body className="min-h-dvh font-sans antialiased" suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           {children}
           <Toaster />
