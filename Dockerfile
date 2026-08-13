@@ -50,10 +50,16 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # secret should ever be baked into an image layer. These placeholders satisfy the schema and
 # are replaced by the real environment when the container runs.
 #
-# The publishable key is the one exception that genuinely IS compiled in — NEXT_PUBLIC_* is
-# inlined into the browser bundle by design — so it has to be a build argument.
+# NEXT_PUBLIC_* variables genuinely ARE compiled in — Next inlines them into the browser
+# bundle by design — so they have to be build arguments. Everything else is a runtime env
+# var; the placeholders below just satisfy lib/env's Zod schema at build time and are
+# replaced by real values when the container starts.
 ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_placeholder
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiJ9.placeholder.build_time_only
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 #
 # Note there is deliberately NO "skip validation" flag. An escape hatch that turns the
 # configuration check off is one that eventually gets set on a real server, and the check
@@ -61,6 +67,7 @@ ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
 ENV SESSION_SECRET=build_time_placeholder_not_a_real_secret_00
 ENV STRIPE_SECRET_KEY=sk_test_placeholder
+ENV SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiJ9.placeholder.build_time_only
 
 RUN npm run build
 

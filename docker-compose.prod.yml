@@ -1,64 +1,54 @@
 # CineVault in production. This is the file Coolify deploys.
 #
-# Three services from two images: Postgres, the web app, and the background worker. The web
-# and worker are the SAME image with a different command — see the Dockerfile header.
+# Two services from ONE image: the web app and the background worker. Both use the same
+# Dockerfile output with a different command — see the Dockerfile header.
+#
+# Postgres is Supabase now. There is no local database container here, no cinevault-pgdata
+# volume; every environment where this runs points DATABASE_URL at a hosted Supabase.
 #
 # Every secret comes from the environment. Coolify injects them from its own configuration,
 # so nothing sensitive is in this file and nothing sensitive is in the repository.
 #
 # WHAT MUST BE SET IN COOLIFY BEFORE THE FIRST DEPLOY
-#   POSTGRES_PASSWORD, SESSION_SECRET, STRIPE_SECRET_KEY,
-#   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, APP_URL, ADMIN_EMAILS,
-#   RESEND_API_KEY
+#   APP_URL, DATABASE_URL, SESSION_SECRET,
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+#   STRIPE_SECRET_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET,
+#   ADMIN_EMAILS, RESEND_API_KEY
 #
 # Anything marked `:?` below stops the deploy if it is missing, rather than starting a
 # container that is quietly missing a feature.
 #
-# The app validates all of it at boot and refuses to start if something required is missing.
-# A container that will not start is a far better failure than one that serves a broken
-# checkout.
+# The app validates all of it at boot (see lib/env.ts) and refuses to start if something
+# required is missing. A container that will not start is a far better failure than one
+# that serves a broken checkout.
 
 services:
-  postgres:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: cinevault
-      # No default. If this is unset the database refuses to start, which is the point —
-      # a compose default here is a production password living in a public repository.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
-      POSTGRES_DB: cinevault
-    volumes:
-      - cinevault-pgdata:/var/lib/postgresql/data
-    # NO ports section. The database is reachable only over the internal compose network;
-    # publishing 5432 would put it on the public internet behind one password.
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cinevault -d cinevault"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-
   web:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        # Compiled into the browser bundle, so it has to be present at BUILD time. It is a
-        # publishable key — safe to ship to browsers, which is what it is for.
+        # Compiled into the browser bundle, so it has to be present at BUILD time. All three
+        # of these are publishable / anon-tier keys, safe to ship in a client bundle — that
+        # is what they are FOR. The service-role Supabase key is deliberately absent from
+        # build args (it must never reach the browser); it lives in `environment` only.
         NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     restart: unless-stopped
     command: ["web"]
-    depends_on:
-      postgres:
-        # Not just "started". The web container migrates before it serves, and a migration
-        # against a database still initialising fails the deploy.
-        condition: service_healthy
     environment:
       NODE_ENV: production
       APP_URL: ${APP_URL:?APP_URL must be set}
-      DATABASE_URL: postgres://cinevault:${POSTGRES_PASSWORD}@postgres:5432/cinevault
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set}
+
+      # Supabase Auth. The two NEXT_PUBLIC values are ALSO passed as build args above so
+      # the client bundle can see them; they are duplicated here for server-side reads.
+      # SERVICE_ROLE_KEY is server-only and never a build arg.
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL must be set}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?NEXT_PUBLIC_SUPABASE_ANON_KEY must be set}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY must be set}
 
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?STRIPE_SECRET_KEY must be set}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
@@ -70,9 +60,10 @@ services:
       PLEX_CLIENT_IDENTIFIER: ${PLEX_CLIENT_IDENTIFIER:-}
       PLEX_PROTECTED_USERS: ${PLEX_PROTECTED_USERS:-}
 
-      # Required, not defaulted. Without a key the app does not fail loudly — it quietly
-      # decides email verification is impossible and lets signups through unverified, and
-      # password resets report success while sending nothing. Refusing to boot is better.
+      # Supabase sends the transactional auth mail now, but the app itself still uses
+      # RESEND_API_KEY to gate whether email verification is "on" (see emailConfigured()
+      # in lib/email/index.ts), and lib/plex/link-ticket.ts HMACs with SESSION_SECRET.
+      # Kept required; refusing to boot without it is deliberate.
       RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY must be set}
       EMAIL_FROM: "${EMAIL_FROM:-CineVault <noreply@getcinevault.com>}"
       EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-https://getcinevault.com/logo.png}
@@ -98,16 +89,21 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     restart: unless-stopped
     command: ["worker"]
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       NODE_ENV: production
       APP_URL: ${APP_URL}
-      DATABASE_URL: postgres://cinevault:${POSTGRES_PASSWORD}@postgres:5432/cinevault
+      DATABASE_URL: ${DATABASE_URL}
       SESSION_SECRET: ${SESSION_SECRET}
+
+      # The worker imports lib/env, and lib/env validates the Supabase vars as required.
+      # Without them the worker refuses to start — same as the web container.
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
 
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
@@ -126,9 +122,8 @@ services:
 
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
 
-      # The worker does not branch on this today, but it is what prunes pending_signups — the
-      # table this flag creates. Letting the two services disagree about whether the feature
-      # is even on is a trap for whoever touches it next.
+      # The worker does not branch on this today, but letting the two services disagree
+      # about whether verification is even on is a trap for whoever touches it next.
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
 
       RECONCILE_INTERVAL_MS: ${RECONCILE_INTERVAL_MS:-300000}
@@ -139,6 +134,3 @@ services:
       ENFORCE_INTERVAL_MS: ${ENFORCE_INTERVAL_MS:-20000}
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
-
-volumes:
-  cinevault-pgdata:
