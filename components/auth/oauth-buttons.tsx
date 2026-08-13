@@ -1,59 +1,37 @@
 "use client";
 
-import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { getSupabaseBrowser } from "@/lib/supabase/client";
 
 /**
  * "Continue with Google" (and any other providers we enable later).
  *
- * Client component so it can call the browser Supabase client, which handles the OAuth
- * handshake — it opens the provider's consent screen and, on approval, returns to
- * `/auth/callback` with a code that the server-side handler exchanges for a session.
+ * Rendered disabled at the moment — the Google OAuth client is not configured in the
+ * Supabase dashboard yet, so clicking the button would bounce to a Supabase error page
+ * that reads worse than a plainly-labelled "Soon". The full click handler and the
+ * signInWithOAuth call are ready to go the day the provider is enabled; see
+ * TODO.md → Auth → "Wire up Google OAuth". Delete this file's `disabled` and the "Soon"
+ * pill, restore the client hook logic (git blame shows the version to bring back), and it
+ * works end-to-end because /auth/callback already handles the OAuth code exchange.
  *
- * The provider button is deliberately its own component rather than a link: `signInWithOAuth`
- * needs the browser client with its cookie/localStorage state, and rendering the redirect on
- * the server would miss the point.
+ * The `next` prop is accepted but ignored right now so callers do not have to touch every
+ * page the day we do turn it on.
  */
-export function OAuthButtons({ next }: { next?: string }) {
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  function signInWith(provider: "google") {
-    setError(null);
-    startTransition(async () => {
-      const supabase = getSupabaseBrowser();
-
-      // `redirectTo` gets appended to the OAuth consent URL as `redirect_to`. Supabase then
-      // includes it in its own callback so the visitor lands at OUR /auth/callback with the
-      // code — same handler as the email-confirm flow.
-      const callback = new URL("/auth/callback", window.location.origin);
-      if (next) callback.searchParams.set("next", next);
-
-      const { error: err } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: { redirectTo: callback.toString() },
-      });
-
-      // `signInWithOAuth` normally redirects the whole page, so we only reach here on error.
-      if (err) setError(err.message);
-    });
-  }
-
+export function OAuthButtons({ next: _next }: { next?: string }) {
   return (
     <div className="space-y-3">
       <Button
         type="button"
         variant="outline"
-        className="w-full"
-        onClick={() => signInWith("google")}
-        disabled={pending}
+        className="relative w-full opacity-60"
+        disabled
+        aria-disabled
       >
         <GoogleGlyph className="mr-2 size-4" />
-        {pending ? "Redirecting…" : "Continue with Google"}
+        Continue with Google
+        <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          Soon
+        </span>
       </Button>
-
-      {error && <p className="text-center text-sm text-destructive">{error}</p>}
     </div>
   );
 }
