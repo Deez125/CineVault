@@ -538,9 +538,10 @@ export const kv = pgTable("kv", {
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
-export type Session = typeof sessions.$inferSelect;
-export type PendingSignup = typeof pendingSignups.$inferSelect;
-export type EmailToken = typeof emailTokens.$inferSelect;
+// The Session, PendingSignup and EmailToken types used to hang off tables that lived here
+// before the Supabase Auth cutover (migration 0010). Supabase owns all of those primitives
+// now and the tables are gone — any remaining reference to these types is a leftover to
+// delete rather than a shim to preserve.
 export type Event = typeof events.$inferSelect;
 export type NewEvent = typeof events.$inferInsert;
 export type Announcement = typeof announcements.$inferSelect;
