@@ -26,9 +26,9 @@ export default async function LoginPage({
 
   return (
     <>
-      <div className="mb-6 text-center">
-        <h1 className="text-xl font-semibold tracking-tight">Welcome back</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Sign in to your account.</p>
+      <div className="mb-8 text-center">
+        <h1 className="auth-display text-4xl leading-none sm:text-5xl">Welcome back</h1>
+        <p className="mt-3 text-sm text-muted-foreground">Sign in to your account.</p>
       </div>
 
       {params.reset && (
@@ -51,9 +51,9 @@ export default async function LoginPage({
 
       <OAuthButtons next={params.next} />
 
-      <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
+      <div className="my-6 flex items-center gap-3 text-muted-foreground">
         <div className="h-px flex-1 bg-border" />
-        <span>or</span>
+        <span className="auth-mono">Or</span>
         <div className="h-px flex-1 bg-border" />
       </div>
 

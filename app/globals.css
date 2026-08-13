@@ -139,8 +139,11 @@
   --chart-5: #dc2626;
 
   /* ── Shape ────────────────────────────────────────────────────────────────
-     Not a colour, but the same idea: one number, everything follows.           */
-  --radius: 0.625rem;
+     Not a colour, but the same idea: one number, everything follows.
+     Tighter than shadcn's default (0.625) to match the landing page, where the
+     tiers, cards and buttons all use ~3px corners. Softer than fully square
+     though — pure right-angles read as unfinished in the app shell. */
+  --radius: 0.375rem;
 }
 
 .dark {
@@ -158,12 +161,13 @@
   --sidebar: #12151b;
   --sidebar-foreground: #e9ecf3;
 
-  /* Lighter than the light-mode blue: the same blue that reads confident on
-     white reads muddy on near-black. */
-  --primary: #3b82f6;
+  /* Landing's azure — the app and the marketing site share one accent now. Same
+     rule as before (this is the dark-mode blue; the light-mode one below is a
+     step darker for contrast on white). */
+  --primary: #4d7cfe;
   --primary-foreground: #ffffff;
 
-  --sidebar-primary: #3b82f6;
+  --sidebar-primary: #4d7cfe;
   --sidebar-primary-foreground: #ffffff;
 
   --secondary: #1c2029;
@@ -185,10 +189,10 @@
 
   --border: #242833;
   --input: #242833;
-  --ring: #3b82f6;
+  --ring: #4d7cfe;
 
   --sidebar-border: #242833;
-  --sidebar-ring: #3b82f6;
+  --sidebar-ring: #4d7cfe;
 
   /* Status colours lifted for contrast against a dark surface. */
   --success: #22c55e;
@@ -200,13 +204,13 @@
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
 
-  --info: #3b82f6;
+  --info: #4d7cfe;
   --info-foreground: #ffffff;
 
   --plex: #ebaf00;
   --plex-foreground: #1a1200;
 
-  --chart-1: #3b82f6;
+  --chart-1: #4d7cfe;
   --chart-2: #22c55e;
   --chart-3: #f59e0b;
   --chart-4: #a855f7;

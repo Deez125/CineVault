@@ -33,7 +33,6 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./user-menu";
 import type { SessionUser } from "@/lib/auth/session";
@@ -139,11 +138,36 @@ export function AppSidebar({ user, dots }: { user: SessionUser; dots?: NavDots }
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <Link href="/" className="flex items-center gap-2.5 px-2 py-1.5">
-          <Image src="/logo.png" alt="" width={26} height={26} className="shrink-0 rounded-md" />
-          <span className="truncate text-base font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            CineVault
-          </span>
+        {/* Both marks live in the same anchor slot at the left, absolutely positioned so
+            they can cross-fade in place rather than snap between hidden/visible states.
+            The wordmark fades OUT and the small mark fades IN over the same 200ms the
+            sidebar itself takes to collapse, so the swap follows the closing animation
+            instead of happening at t=0. */}
+        <Link
+          href="/"
+          className="relative flex h-8 items-center px-2"
+          aria-label="CineVault"
+        >
+          <Image
+            src="/logo.svg"
+            alt="CineVault"
+            width={112}
+            height={24}
+            priority
+            className="absolute left-2 top-1/2 h-6 w-auto -translate-y-1/2 invert transition-opacity duration-200 ease-linear group-data-[collapsible=icon]:opacity-0 dark:invert-0"
+          />
+          {/* Hard 20x20 via inline style so the intrinsic SVG viewBox and Next's Image
+              layout cannot renegotiate the size mid-transition. Smaller than 24 so the
+              collapsed rail (~48px wide) feels proportional to the icons below it. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo-small.svg"
+            alt=""
+            width={20}
+            height={20}
+            style={{ width: 20, height: 20 }}
+            className="absolute left-2 top-1/2 -translate-y-1/2 invert opacity-0 transition-opacity duration-200 ease-linear group-data-[collapsible=icon]:opacity-100 dark:invert-0"
+          />
         </Link>
       </SidebarHeader>
 
@@ -191,10 +215,9 @@ export function AppSidebar({ user, dots }: { user: SessionUser; dots?: NavDots }
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
-          <UserMenu user={user} />
-          <ThemeToggle className="shrink-0" />
-        </div>
+        {/* Theme toggle lives inside UserMenu's dropdown now; keeping it out of the footer
+            means the icon-mode rail is one clean column of icons rather than a stack. */}
+        <UserMenu user={user} />
       </SidebarFooter>
     </Sidebar>
   );

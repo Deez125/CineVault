@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   },
   description:
     "A private Discord for serious movie and TV lovers. Discuss classics, uncover hidden gems, share recommendations, and enjoy curated libraries together in a tight-knit group.",
-  icons: { icon: "/logo.png" },
+  icons: { icon: "/favicon.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

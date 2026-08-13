@@ -19,9 +19,15 @@ export const metadata: Metadata = { title: "That link didn't work" };
 export default function VerifyExpiredPage() {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center px-6 py-12 text-center">
-      <Link href="/" className="mb-8 flex items-center gap-2.5">
-        <Image src="/logo.png" alt="" width={32} height={32} className="rounded-md" priority />
-        <span className="text-lg font-semibold tracking-tight">CineVault</span>
+      <Link href="/" className="mb-8 flex items-center" aria-label="CineVault">
+        <Image
+          src="/logo.svg"
+          alt="CineVault"
+          width={140}
+          height={32}
+          priority
+          className="h-8 w-auto invert dark:invert-0"
+        />
       </Link>
 
       <TriangleAlert className="size-10 text-destructive" />

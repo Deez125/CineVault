@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { LifeBuoy } from "lucide-react";
 import { SiteHeader } from "@/components/site/site-header";
+import { SiteFooter } from "@/components/site/site-footer";
 import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = { title: "Help" };
@@ -73,6 +74,7 @@ export default async function HelpPage() {
           </Link>
         </p>
       </main>
+      <SiteFooter />
     </>
   );
 }

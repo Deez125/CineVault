@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SiteHeader } from "./site-header";
+import { SiteFooter } from "./site-footer";
 import type { SessionUser } from "@/lib/auth/session";
 
 /** Shared shell for Terms and Privacy. Prose, one column, nothing to click but the words. */
@@ -30,6 +31,7 @@ export function LegalPage({
           </Link>
         </p>
       </main>
+      <SiteFooter />
     </>
   );
 }

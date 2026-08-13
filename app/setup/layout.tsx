@@ -14,9 +14,15 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
         <ThemeToggle />
       </div>
 
-      <Link href="/" className="mb-8 flex items-center gap-2.5">
-        <Image src="/logo.png" alt="" width={32} height={32} className="rounded-md" priority />
-        <span className="text-lg font-semibold tracking-tight">CineVault</span>
+      <Link href="/" className="mb-8 flex items-center" aria-label="CineVault">
+        <Image
+          src="/logo.svg"
+          alt="CineVault"
+          width={140}
+          height={32}
+          priority
+          className="h-8 w-auto invert dark:invert-0"
+        />
       </Link>
 
       <div className="w-full max-w-md">{children}</div>
