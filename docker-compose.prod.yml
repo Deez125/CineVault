@@ -38,7 +38,9 @@ services:
     restart: unless-stopped
     command: ["web"]
     environment:
-      NODE_ENV: production
+      # NODE_ENV=production is baked into the runtime image (Dockerfile line 93). Declaring
+      # it here would only duplicate the value AND cause Coolify to lock it in its env UI,
+      # blocking removal of a stale entry — as happened on the Supabase cutover.
       APP_URL: ${APP_URL:?APP_URL must be set}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set}
@@ -98,7 +100,7 @@ services:
     restart: unless-stopped
     command: ["worker"]
     environment:
-      NODE_ENV: production
+      # NODE_ENV baked in via Dockerfile — see the note in the web service above.
       APP_URL: ${APP_URL}
       DATABASE_URL: ${DATABASE_URL}
       SESSION_SECRET: ${SESSION_SECRET}
