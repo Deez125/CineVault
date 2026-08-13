@@ -65,7 +65,11 @@ services:
       # in lib/email/index.ts), and lib/plex/link-ticket.ts HMACs with SESSION_SECRET.
       # Kept required; refusing to boot without it is deliberate.
       RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY must be set}
-      EMAIL_FROM: "${EMAIL_FROM:-CineVault <noreply@getcinevault.com>}"
+      # EMAIL_FROM is deliberately NOT declared here. Its value contains angle brackets
+      # (`CineVault <noreply@getcinevault.com>`) which break shell-style env parsers — and
+      # Coolify treats any variable referenced in compose as locked, blocking removal from
+      # its env UI. The app defaults to the same string in lib/env.ts, so leaving it out
+      # here changes nothing at runtime and lets the env editor stay clean.
       EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-https://getcinevault.com/logo.png}
 
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
@@ -117,7 +121,11 @@ services:
 
       # The worker calls assertEmailConfigured() on startup and will not run without this.
       RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY must be set}
-      EMAIL_FROM: "${EMAIL_FROM:-CineVault <noreply@getcinevault.com>}"
+      # EMAIL_FROM is deliberately NOT declared here. Its value contains angle brackets
+      # (`CineVault <noreply@getcinevault.com>`) which break shell-style env parsers — and
+      # Coolify treats any variable referenced in compose as locked, blocking removal from
+      # its env UI. The app defaults to the same string in lib/env.ts, so leaving it out
+      # here changes nothing at runtime and lets the env editor stay clean.
       EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-https://getcinevault.com/logo.png}
 
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
