@@ -152,7 +152,7 @@ async function handle(event: Stripe.Event): Promise<void> {
         // Pay whoever referred this member, if anybody did and this is their first payment.
         // Gated on `amount_paid > 0` so a $0 invoice — a full-coverage credit, a trial — does
         // not trigger a payout; and the ledger's own pending check makes a redelivered webhook
-        // a no-op rather than a second $10.
+        // a no-op rather than a second $5.
         //
         // The invoice id goes with it so the reward records which payment earned it, which is
         // what a later refund matches on.

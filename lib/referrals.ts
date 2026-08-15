@@ -16,7 +16,7 @@ import { stripe } from "@/lib/stripe/client";
  * Referrals.
  *
  * A member mints an invite link. Somebody signs up with it and gets 50% off their first
- * month; once that first payment actually clears, $10 comes off the member's next bill.
+ * month; once that first payment actually clears, $5 comes off the member's next bill.
  *
  * The two halves are deliberately different shapes. A flat credit for the referrer is
  * predictable and easy to say out loud; a percentage for the referee is worth more on the
@@ -38,7 +38,7 @@ import { stripe } from "@/lib/stripe/client";
  */
 
 /** Credit to the referrer, in minor units. Flat, regardless of either party's plan. */
-export const REFERRAL_REWARD = 1000;
+export const REFERRAL_REWARD = 500;
 export const REFERRAL_CURRENCY = "usd";
 
 /** What the referee gets off their first month. */
@@ -475,7 +475,7 @@ export async function rewardForFirstPayment(
  * nothing in practice.
  *
  * Returns null rather than throwing. Without it a clawback simply cannot match this reward
- * later, and losing the ability to reverse $10 is a far better outcome than failing the
+ * later, and losing the ability to reverse $5 is a far better outcome than failing the
  * webhook and losing the reward — or worse, retrying it.
  */
 async function paymentIntentFor(invoiceId: string): Promise<string | null> {
@@ -498,18 +498,18 @@ async function paymentIntentFor(invoiceId: string): Promise<string | null> {
  * Reverse a referral credit when the payment that earned it goes away.
  *
  * The rule: a reward stands as long as the money that bought it stands. If the referee
- * charges back or takes a full refund on the payment we paid out on, the $10 comes back off
+ * charges back or takes a full refund on the payment we paid out on, the $5 comes back off
  * the referrer's balance.
  *
  * WHAT THIS DELIBERATELY DOES NOT DO
  *   - A partial refund leaves the credit alone. Refunding $3 of goodwill should not cost
- *     somebody else $10, and the referee did pay.
+ *     somebody else $5, and the referee did pay.
  *   - A refund on a LATER invoice leaves it alone too, which is what the payment intent is
  *     matched on. Somebody who stayed six months was a real referral no matter how month six
  *     ended.
  *
  * Idempotent: only a `rewarded` row can be reversed, so a redelivered refund event is a
- * no-op rather than a second $10 charged back to the referrer.
+ * no-op rather than a second $5 charged back to the referrer.
  */
 export async function reverseReward(
   paymentIntentId: string,
