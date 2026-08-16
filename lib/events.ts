@@ -35,6 +35,8 @@ export const EVENT_TYPES = [
   "user_banned",
   "user_unbanned",
   "admin_action",
+  "metrics_snapshot",
+  "user_activity_refresh",
   "error",
 ] as const;
 

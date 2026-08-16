@@ -6,6 +6,8 @@ import { reconcileAll } from "../lib/reconcile";
 import { enforceStreamLimits } from "../lib/enforce";
 import { refreshRecentlyAdded } from "../lib/plex/recently-added-cache";
 import { purgeDeadLinks, sweepExpiredLinks } from "../lib/referrals";
+import { writeDailySnapshot } from "../lib/analytics/snapshot";
+import { refreshUserActivity } from "../lib/analytics/dormant";
 import { pool } from "../lib/db";
 import { logError } from "../lib/events";
 
@@ -30,6 +32,19 @@ const ENFORCE_MS = env.ENFORCE_INTERVAL_MS;
 const PRUNE_MS = 60 * 60 * 1000;
 /** New films land a few times a day. Ten minutes is far more often than they arrive. */
 const RECENTLY_ADDED_MS = 10 * 60 * 1000;
+
+/**
+ * Analytics rollups run daily. We tick every hour and let the job itself decide whether the
+ * day has rolled over — cheaper than reasoning about DST or matching a cron string, and it
+ * means a worker restart at 03:59 doesn't skip the 04:00 fire. The snapshot upserts by date
+ * so re-running the same day is a no-op after the first successful write.
+ */
+const ANALYTICS_TICK_MS = 60 * 60 * 1000;
+/** UTC hour we consider "night" — chosen after the busy North-American evening. */
+const SNAPSHOT_HOUR_UTC = 4;
+/** Track the last date we wrote so the hourly tick knows when a new day is due. */
+let lastSnapshotDate: string | null = null;
+let lastActivityRefreshDate: string | null = null;
 
 let running = true;
 
@@ -56,6 +71,8 @@ async function main() {
       `  recently added every ${Math.round(RECENTLY_ADDED_MS / 60000)}m`,
       `  stream limits every ${Math.round(ENFORCE_MS / 1000)}s` +
         (env.ENFORCE_STREAM_LIMITS ? "" : "  (DRY RUN — set ENFORCE_STREAM_LIMITS=true to act)"),
+      `  analytics snapshot daily around ${SNAPSHOT_HOUR_UTC.toString().padStart(2, "0")}:00 UTC` +
+        (env.SNAPSHOT_DRY_RUN ? "  (DRY RUN — set SNAPSHOT_DRY_RUN=false to persist)" : ""),
       `  plex: ${plexConfigured() ? "configured" : "NOT configured (shares will be skipped)"}`,
       "",
     ].join("\n")
@@ -74,6 +91,10 @@ async function main() {
     RECENTLY_ADDED_MS
   );
   const enforceTimer = setInterval(() => void safely("enforce", runEnforce), ENFORCE_MS);
+  const analyticsTimer = setInterval(() => void safely("analytics", runAnalytics), ANALYTICS_TICK_MS);
+  // Also try immediately on boot — a redeploy at 04:30 shouldn't have to wait until 05:00
+  // for the first tick to consider firing the daily job.
+  void safely("analytics", runAnalytics);
 
   const stop = (signal: string) => {
     if (!running) return;
@@ -84,6 +105,7 @@ async function main() {
     clearInterval(pruneTimer);
     clearInterval(recentTimer);
     clearInterval(enforceTimer);
+    clearInterval(analyticsTimer);
 
     // Close the pool so the process actually exits rather than hanging on an open connection
     // and being SIGKILLed by the orchestrator thirty seconds later.
@@ -122,6 +144,52 @@ async function runEnforce() {
       `  enforce: ${result.terminated} stopped, ${result.wouldTerminate} would have been` +
         ` (${result.sessions} streams, ${result.overLimit} over limit)`
     );
+  }
+}
+
+/**
+ * Snapshot MRR/churn/dormancy for today, and refresh the user-activity cache.
+ *
+ * Fires on the hourly analytics tick, but the write only happens once we've crossed into
+ * today's SNAPSHOT_HOUR_UTC and haven't yet written for today. Two guards, on purpose:
+ *
+ *   - Time-of-day guard means "wait until the world's asleep before hitting the Plex
+ *     history endpoint per user."
+ *   - Same-day guard means the hourly tick doesn't re-run the whole job every hour after
+ *     the first successful write.
+ *
+ * A worker restart resets `lastSnapshotDate` in memory, which is fine — the snapshot upsert
+ * is idempotent, and the activity refresh reading Plex again costs a few seconds.
+ */
+async function runAnalytics() {
+  if (!plexConfigured()) return;
+
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+
+  if (now.getUTCHours() < SNAPSHOT_HOUR_UTC) return;
+
+  if (lastActivityRefreshDate !== today) {
+    // Refresh activity first — the snapshot's dormancy counts read from it.
+    const result = await refreshUserActivity();
+    lastActivityRefreshDate = today;
+    if (result.updated > 0 || result.checked > 0) {
+      console.log(
+        `  user-activity: ${result.updated}/${result.checked} refreshed (${result.durationMs}ms)`
+      );
+    }
+  }
+
+  if (lastSnapshotDate !== today) {
+    const written = await writeDailySnapshot(now);
+    lastSnapshotDate = today;
+    if (written) {
+      console.log(
+        `  snapshot: wrote ${today} — mrr $${(written.mrrCents / 100).toFixed(2)}, ${written.activeSubscribers} active`
+      );
+    } else if (env.SNAPSHOT_DRY_RUN) {
+      console.log(`  snapshot: dry-run for ${today}`);
+    }
   }
 }
 

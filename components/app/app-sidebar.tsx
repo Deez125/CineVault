@@ -9,7 +9,7 @@ import {
   CreditCard,
   Gift,
   LayoutGrid,
-
+  LineChart,
   Megaphone,
   MessageSquare,
   Play,
@@ -90,6 +90,7 @@ const ACCOUNT_NAV: NavItem[] = [
 
 const ADMIN_NAV: NavItem[] = [
   { href: "/admin", label: "Overview", icon: ShieldCheck },
+  { href: "/admin/analytics", label: "Analytics", icon: LineChart },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/support", label: "Support inbox", icon: MessageSquare },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone },

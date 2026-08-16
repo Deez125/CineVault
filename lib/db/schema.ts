@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigserial,
   boolean,
+  date,
   index,
   integer,
   jsonb,
@@ -535,6 +536,106 @@ export const kv = pgTable("kv", {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// analytics
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One row per date. Every figure the analytics "trends" panel plots comes from here.
+ *
+ * APPEND-ONLY in spirit — the nightly job upserts by date, and a rerun overwrites the same
+ * day's row rather than adding a second one, but no code path should be editing older days.
+ * MRR movement (new/expansion/contraction/churned) is computed by diffing today's per-sub
+ * MRR against yesterday's snapshot, so yesterday MUST still be there.
+ *
+ * Money is in cents throughout. See lib/analytics/stripe-live.ts for the yearly→monthly
+ * normalisation rules — they run the same way whether it is today's live figure or last
+ * Tuesday's snapshot.
+ */
+export const metricsSnapshot = pgTable(
+  "metrics_snapshot",
+  {
+    // Postgres `date` — one row per calendar day, no time-of-day precision needed. `mode:
+    // "string"` gives us back "2026-08-16" instead of a Date, which is what we compare on and
+    // what the /analytics page renders anyway.
+    date: date("date", { mode: "string" }).primaryKey(),
+
+    activeSubscribers: integer("active_subscribers").notNull().default(0),
+    trialingSubscribers: integer("trialing_subscribers").notNull().default(0),
+    pastDueSubscribers: integer("past_due_subscribers").notNull().default(0),
+    cancellingSubscribers: integer("cancelling_subscribers").notNull().default(0),
+
+    mrrCents: integer("mrr_cents").notNull().default(0),
+    atRiskMrrCents: integer("at_risk_mrr_cents").notNull().default(0),
+    cancellingMrrCents: integer("cancelling_mrr_cents").notNull().default(0),
+    arpuCents: integer("arpu_cents").notNull().default(0),
+
+    /** `{ "1": { count, mrr_cents }, "2": { ... }, ... }` keyed by streamLimit. */
+    byTier: jsonb("by_tier").notNull().default(sql`'{}'::jsonb`),
+
+    newSubscribers: integer("new_subscribers").notNull().default(0),
+    churnedSubscribers: integer("churned_subscribers").notNull().default(0),
+    churnedVoluntary: integer("churned_voluntary").notNull().default(0),
+    churnedInvoluntary: integer("churned_involuntary").notNull().default(0),
+    newMrrCents: integer("new_mrr_cents").notNull().default(0),
+    expansionMrrCents: integer("expansion_mrr_cents").notNull().default(0),
+    contractionMrrCents: integer("contraction_mrr_cents").notNull().default(0),
+    churnedMrrCents: integer("churned_mrr_cents").notNull().default(0),
+
+    dormant30d: integer("dormant_30d").notNull().default(0),
+    dormant60d: integer("dormant_60d").notNull().default(0),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("metrics_snapshot_date_desc_idx").on(sql`${t.date} desc`)]
+);
+
+/**
+ * Most-recent playback timestamp per user, cached from Plex history.
+ *
+ * The admin dormant panel MUST NOT fan out to Plex per user on page render — one request per
+ * subscriber and the page hangs. The nightly worker pass writes here; the panel reads.
+ *
+ * `lastWatchedAt` is nullable on purpose: null means "Plex has no history at all" which is a
+ * different bucket ("never watched") from "last watched a year ago" and different again from
+ * "we haven't managed to check yet".
+ */
+export const userActivity = pgTable(
+  "user_activity",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lastWatchedAt: timestamp("last_watched_at", { withTimezone: true }),
+    /** Reserved for the top-transcoders panel; populated by the same nightly pass. */
+    transcodeCount30d: integer("transcode_count_30d").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("user_activity_last_watched_at_idx").on(t.lastWatchedAt)]
+);
+
+/**
+ * Fixed monthly operating costs the admin types in. Subtracted from MRR to show profit.
+ *
+ * `active` rather than a hard delete: preserves the row so a past month's profit figure can
+ * be reconstructed later if we ever go back and compute historical profit. Yearly costs get
+ * pre-divided by the admin before typing — see the notes column for "×12" reminders and the
+ * unit stays monthly cents everywhere, matching MRR.
+ */
+export const adminCosts = pgTable(
+  "admin_costs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    monthlyCents: integer("monthly_cents").notNull(),
+    active: boolean("active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("admin_costs_active_idx").on(t.active)]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -549,3 +650,8 @@ export type Ticket = typeof tickets.$inferSelect;
 export type TicketMessage = typeof ticketMessages.$inferSelect;
 export type Referral = typeof referrals.$inferSelect;
 export type ReferralLink = typeof referralLinks.$inferSelect;
+export type MetricsSnapshot = typeof metricsSnapshot.$inferSelect;
+export type NewMetricsSnapshot = typeof metricsSnapshot.$inferInsert;
+export type UserActivity = typeof userActivity.$inferSelect;
+export type AdminCost = typeof adminCosts.$inferSelect;
+export type NewAdminCost = typeof adminCosts.$inferInsert;

@@ -141,6 +141,16 @@ const schema = z.object({
     .default("false")
     .transform((v) => v === "true"),
 
+  /**
+   * Dry-run mode for the nightly analytics snapshotter. Same pattern as ENFORCE_STREAM_LIMITS
+   * — the job still runs, still computes the whole row, and logs what it would insert; it
+   * just does not touch the table. Flip to false only after watching one real day's output.
+   */
+  SNAPSHOT_DRY_RUN: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+
   // ── Background loop tuning ────────────────────────────────────────────────
   RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60_000),
   ENFORCE_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
