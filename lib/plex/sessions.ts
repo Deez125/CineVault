@@ -19,8 +19,15 @@ export type PlexSession = {
    * resumed film "old".
    */
   sessionKey: number;
-  /** Plex account id. Matches users.plex_user_id. */
-  userId: string;
+  /**
+   * Plex account id. Matches users.plex_user_id.
+   *
+   * Null when Plex omits the User element on this session — which it does for some server-
+   * owner playbacks. The enforcer treats a null userId as unattributable and skips it (you
+   * cannot enforce a limit against a member you cannot name); the admin session view shows
+   * them anyway, because they are the server owner and it is their own playback.
+   */
+  userId: string | null;
   username: string | null;
   /** "playing" | "paused" | "buffering" */
   state: string;
@@ -99,9 +106,12 @@ export async function listSessions(): Promise<PlexSession[]> {
     const sessionId = s.Session?.id;
     const userId = s.User?.id;
 
-    // Both are required to act. A session we cannot name or cannot attribute is one we must
-    // not count against anybody, let alone terminate.
-    if (!sessionId || userId === undefined || userId === null) return [];
+    // A sessionId is required — everything downstream (terminate, dedup) needs it. But a
+    // MISSING User element does not disqualify the session; Plex omits it on some server-
+    // owner playbacks, and the admin view wants to show those regardless. Attribution then
+    // becomes the caller's problem: the enforcer skips null-userId sessions (cannot punish
+    // an unnamed user), while /api/me/sessions returns them to admins and only admins.
+    if (!sessionId) return [];
 
     const isEpisode = s.type === "episode";
 
@@ -124,7 +134,7 @@ export async function listSessions(): Promise<PlexSession[]> {
       {
         sessionId: String(sessionId),
         sessionKey: Number(s.sessionKey ?? 0),
-        userId: String(userId),
+        userId: userId === undefined || userId === null ? null : String(userId),
         username: s.User?.title ?? null,
         state: s.Player?.state ?? "unknown",
         title: logTitle,

@@ -109,8 +109,14 @@ export async function enforceStreamLimits(deps: EnforceDeps = {}): Promise<Enfor
 
   // Group by Plex account. Paused counts — a paused stream still holds a slot, and treating
   // it as free would let somebody park one on every device.
+  //
+  // Unattributed sessions (null userId, which Plex sometimes reports for owner playbacks)
+  // are skipped entirely: nobody to bill them against, and terminating a session we cannot
+  // name would break the whole "never touch what you cannot verify" rail this file is built
+  // around.
   const byPlexUser = new Map<string, PlexSession[]>();
   for (const s of sessions) {
+    if (s.userId === null) continue;
     const list = byPlexUser.get(s.userId) ?? [];
     list.push(s);
     byPlexUser.set(s.userId, list);

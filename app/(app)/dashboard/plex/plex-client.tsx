@@ -65,7 +65,12 @@ export function PlexClient({
   // Hoisted here rather than inside SessionsPanel — the same live count is rendered in the
   // Stat card above the panel, and two independent hook instances would poll twice per tick.
   // The panel receives this as its `data` prop and skips its own polling.
-  const sessionsData = useMySessions({ enabled: state.isMember && shared });
+  //
+  // Admins are enabled even when the "shared" flag is false: owners are never shared WITH
+  // themselves, they just play from their own server. Requiring the flag would silently blank
+  // the panel for the one account that always has something to show.
+  const canView = state.isMember || state.isAdmin;
+  const sessionsData = useMySessions({ enabled: canView });
 
   /**
    * The owner's own account, not a guest of it.
@@ -273,13 +278,14 @@ export function PlexClient({
       </div>
 
       {/* ── Live sessions ────────────────────────────────────────────────────
-          The full "watching now" panel: rich cards per stream, live x/y in the header. Only
-          rendered once the share is actually active — before that there is nothing they
-          could be watching, and showing "0/N" would suggest the wait is over when it isn't. */}
-      {shared && (
+          The "watching now" panel: rich cards per stream, live x/y in the header.
+          Rendered for anybody who can plausibly have a session — admins (own the server)
+          and members who are shared in. A member without a share yet gets nothing; showing
+          "0/N" before the invite is accepted would misleadingly suggest the wait is over. */}
+      {(state.isAdmin || shared) && (
         <div className="mt-5">
           <SessionsPanel
-            isMember={state.isMember}
+            isMember={canView}
             streamLimit={state.streamLimit}
             data={sessionsData}
           />
