@@ -1,4 +1,6 @@
-import "server-only";
+// Deliberately NOT marked `server-only`: refreshUserActivity is called by the background
+// worker (plain Node), and `server-only` throws in every non-RSC caller. Same reason as
+// lib/analytics/snapshot.ts.
 
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";

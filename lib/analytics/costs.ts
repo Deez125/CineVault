@@ -1,4 +1,7 @@
-import "server-only";
+// Deliberately NOT marked `server-only`: kept consistent with the other analytics libs so a
+// future worker task that reads costs (e.g. writing a profit column into the snapshot)
+// doesn't trip the same "cannot import from a Client Component" runtime error the initial
+// deploy hit. The pg pool imported through @/lib/db keeps this server-side in practice.
 
 import { desc, eq, sum } from "drizzle-orm";
 import { db } from "@/lib/db";

@@ -1,4 +1,7 @@
-import "server-only";
+// Deliberately NOT marked `server-only`: this file is imported by the background worker,
+// which is a plain Node process (not a React Server Component context). `server-only`
+// throws in every non-RSC caller, worker included, so it must never appear here — same
+// exemption as lib/enforce.ts and lib/reconcile.ts, which the worker also loads.
 
 import type Stripe from "stripe";
 import { and, count, desc, eq, isNotNull, lt, sql } from "drizzle-orm";

@@ -1,4 +1,6 @@
-import "server-only";
+// Deliberately NOT marked `server-only`: transitively imported by lib/analytics/snapshot.ts,
+// which the background worker loads. `server-only` throws in every non-RSC caller, worker
+// included.
 
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe/client";

@@ -1,4 +1,5 @@
-import "server-only";
+// Deliberately NOT marked `server-only`: transitively imported by lib/analytics/dormant.ts,
+// which the background worker loads. `server-only` throws in every non-RSC caller.
 
 import { serverJson } from "@/lib/plex/server";
 
