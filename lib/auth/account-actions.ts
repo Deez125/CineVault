@@ -20,6 +20,7 @@ import {
   uploadAvatar,
   validateAvatarFile,
 } from "@/lib/avatar";
+import { revokeSession } from "./sessions";
 import type { FormState } from "./actions";
 
 /** Account settings: name, password, and closing the account. */
@@ -123,6 +124,38 @@ export async function updateAvatarAction(
 
   revalidatePath("/dashboard/settings");
   return { success: "Photo updated." };
+}
+
+/**
+ * End one signed-in session for the current user.
+ *
+ * Handles the "sign me out on that laptop I forgot about" case from the settings page. The
+ * session id comes from listMySessions on the same page; passing user.id here as the
+ * required match means a copy-pasted id from anyone else's session cannot revoke it.
+ */
+export async function revokeSessionAction(
+  _prev: FormState,
+  formData: FormData
+): Promise<FormState> {
+  const user = await getCurrentUser();
+  if (!user) return { error: "Sign in first." };
+
+  const sessionId = String(formData.get("sessionId") ?? "").trim();
+  if (!sessionId) return { error: "Missing session id." };
+
+  try {
+    await revokeSession(sessionId, user.id);
+  } catch (err) {
+    await logError(
+      "revokeSession failed",
+      { error: err instanceof Error ? err.message : String(err), sessionId },
+      { userId: user.id, email: user.email, actor: "user" }
+    );
+    return { error: "That didn't work. Try again." };
+  }
+
+  revalidatePath("/dashboard/settings");
+  return { success: "Signed out on that device." };
 }
 
 /** SQLSTATE 23505, anywhere in the cause chain. Drizzle wraps the driver's error. */

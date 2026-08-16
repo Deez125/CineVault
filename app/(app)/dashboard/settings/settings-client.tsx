@@ -27,6 +27,7 @@ import { USERNAME_MAX, USERNAME_MIN } from "@/lib/display-name";
 import { resendVerificationAction } from "@/lib/auth/actions";
 import type { FormState } from "@/lib/auth/actions";
 import { AvatarField } from "./avatar-field";
+import { SessionsSection, type SessionRow } from "./sessions-section";
 
 export function SettingsClient({
   email,
@@ -37,6 +38,7 @@ export function SettingsClient({
   emailVerified,
   showVerification,
   isMember,
+  sessions,
 }: {
   email: string;
   firstName: string | null;
@@ -46,6 +48,7 @@ export function SettingsClient({
   emailVerified: boolean;
   showVerification: boolean;
   isMember: boolean;
+  sessions: SessionRow[];
 }) {
   const [deleting, setDeleting] = useState(false);
 
@@ -119,6 +122,10 @@ export function SettingsClient({
 
           {showVerification && !emailVerified && <ResendVerification />}
         </div>
+      </Section>
+
+      <Section title="Signed-in devices">
+        <SessionsSection sessions={sessions} />
       </Section>
 
       <Section title="Password">
