@@ -13,7 +13,7 @@ export default async function PrivacyPage() {
   const user = await getSessionUser();
 
   return (
-    <LegalPage user={user} title="Privacy Policy" updated="2 August 2026">
+    <LegalPage user={user} title="Privacy Policy" updated="15 August 2026">
       <Clause heading="The short version">
         <p>
           We store the minimum needed to bill you and give you access: your email, your Plex
@@ -29,8 +29,10 @@ export default async function PrivacyPage() {
             one.
           </li>
           <li>
-            <b className="text-foreground">Your password, hashed.</b> It is put through scrypt
-            and cannot be read back, by us or by anyone who obtained the database.
+            <b className="text-foreground">Your password, hashed.</b> Sign-in is handled by
+            Supabase, our authentication provider. Your password is hashed on their servers
+            with a modern algorithm and cannot be read back — by us, by them, or by anyone
+            who obtained either database.
           </li>
           <li>
             <b className="text-foreground">Your Plex username, email and user id</b>, once you
@@ -80,6 +82,11 @@ export default async function PrivacyPage() {
           details under their own privacy policy.
         </p>
         <p>
+          <b className="text-foreground">Supabase</b> hosts our database and handles sign-in.
+          Your email address and hashed password sit on their servers, under their own privacy
+          policy.
+        </p>
+        <p>
           <b className="text-foreground">Plex</b> receives your Plex account identifier so the
           libraries can be shared with you, which is how their sharing works.
         </p>
@@ -105,17 +112,33 @@ export default async function PrivacyPage() {
 
       <Clause heading="Your choices">
         <p>
-          You can change your email or password, see what we hold, and delete your account
-          entirely, all from your settings page. If you want a copy of your data or want
-          something corrected, ask and we will do it.
+          You can update your name and username, change your email or password, and delete
+          your account entirely from your settings page. The full list of what we hold is the
+          &quot;What we store&quot; section above — nothing is hidden. If you want a copy of
+          your data or want something corrected, ask and we will do it.
         </p>
       </Clause>
 
       <Clause heading="Cookies">
         <p>
-          One cookie, for keeping you signed in. There are no advertising or tracking cookies
-          on this site.
+          A handful of cookies, all necessary for the site to work — none for advertising or
+          tracking:
         </p>
+        <ul className="ml-5 list-disc space-y-1.5">
+          <li>
+            <b className="text-foreground">Sign-in cookies</b>, set by Supabase when you sign
+            in and refreshed as you use the site. They tell the server it is you.
+          </li>
+          <li>
+            <b className="text-foreground">A short-lived Plex-linking cookie</b> during the
+            few minutes it takes to link your Plex account, cleared as soon as the flow
+            finishes.
+          </li>
+          <li>
+            <b className="text-foreground">A theme preference</b> if you switch between light
+            and dark mode, so the site remembers your choice on your next visit.
+          </li>
+        </ul>
       </Clause>
 
       <Clause heading="Contact">
