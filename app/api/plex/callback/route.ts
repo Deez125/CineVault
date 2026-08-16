@@ -1,29 +1,35 @@
-import { redirect } from "next/navigation";
+import { NextResponse } from "next/server";
 import { apiMember } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/auth/session";
+import { env } from "@/lib/env";
 import { logError } from "@/lib/events";
 import { PlexLinkError, pollLink } from "@/lib/plex/linking";
-import { clearLinkTicket, readLinkTicket } from "@/lib/plex/link-ticket";
+import { LINK_COOKIE_NAME, readLinkTicket } from "@/lib/plex/link-ticket";
 
 /**
  * Where Plex sends the member back after they sign in.
  *
  * Redeems the PIN for their identity, records it, and provisions. Then bounces to the Plex
  * page with a result, so the outcome is visible rather than silent.
+ *
+ * Uses NextResponse.redirect and attaches the ticket-cookie CLEAR to that same response for
+ * the same reason /api/plex/start uses it — cookie writes via cookies().set() don't
+ * reliably survive the redirect once the root middleware is in play.
  */
 export async function GET() {
   const member = await apiMember();
   if (!member.ok) return member.response;
 
   const user = await getCurrentUser();
-  if (!user) redirect("/login?next=/dashboard/plex");
+  if (!user) {
+    return NextResponse.redirect(new URL("/login?next=/dashboard/plex", env.APP_URL));
+  }
 
   const pinId = await readLinkTicket(user.id);
-  await clearLinkTicket();
 
   if (!pinId) {
     // No ticket, expired, or belonging to somebody else. Nothing to redeem.
-    redirect("/dashboard/plex?error=expired");
+    return clearingRedirect("/dashboard/plex?error=expired");
   }
 
   let outcome: string;
@@ -55,6 +61,17 @@ export async function GET() {
     }
   }
 
-  // Outside the try: redirect() throws to do its work, so it must not be inside a catch.
-  redirect(`/dashboard/plex${outcome}`);
+  return clearingRedirect(`/dashboard/plex${outcome}`);
+}
+
+/**
+ * Redirect to a path under APP_URL, clearing the plex-link ticket cookie on the way out.
+ *
+ * The ticket is single-use — whatever happened, we do not want it sitting in the browser
+ * for a subsequent stray hit on this route.
+ */
+function clearingRedirect(path: string) {
+  const response = NextResponse.redirect(new URL(path, env.APP_URL));
+  response.cookies.delete(LINK_COOKIE_NAME);
+  return response;
 }

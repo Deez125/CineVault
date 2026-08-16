@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
+import type { NextResponse } from "next/server";
 import { env, isProduction } from "@/lib/env";
 
 /**
@@ -16,7 +17,9 @@ import { env, isProduction } from "@/lib/env";
  * subscription. Binding to the user id means a stolen ticket is useless to anyone else.
  */
 
-const COOKIE = "cv_plex_link";
+/** Exported so the callback can clear it on a response it owns (see /api/plex/callback). */
+export const LINK_COOKIE_NAME = "cv_plex_link";
+const COOKIE = LINK_COOKIE_NAME;
 const MAX_AGE_SECONDS = 15 * 60;
 
 type Ticket = { pinId: number; userId: string; exp: number };
@@ -24,7 +27,21 @@ type Ticket = { pinId: number; userId: string; exp: number };
 const sign = (body: string) =>
   crypto.createHmac("sha256", env.SESSION_SECRET).update(body).digest("base64url");
 
-export async function setLinkTicket(pinId: number, userId: string): Promise<void> {
+/**
+ * Attach the plex link ticket to a specific response object.
+ *
+ * We DO NOT use `cookies().set()` here because the /api/plex/start route calls this and then
+ * `redirect()`s to Plex — and cookies written to the request-scoped cookie jar are not
+ * reliably attached to the redirect response when the root middleware has already prepared
+ * one via `NextResponse.next()`. Plex sends the visitor back with no ticket, the callback
+ * sees `?error=expired`, and the whole flow silently fails. Setting the cookie on an
+ * explicit NextResponse we control avoids that trap entirely.
+ */
+export function setLinkTicketOnResponse(
+  response: NextResponse,
+  pinId: number,
+  userId: string
+): void {
   const payload: Ticket = {
     pinId,
     userId,
@@ -34,7 +51,7 @@ export async function setLinkTicket(pinId: number, userId: string): Promise<void
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const token = `${body}.${sign(body)}`;
 
-  (await cookies()).set(COOKIE, token, {
+  response.cookies.set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: isProduction,
@@ -70,6 +87,7 @@ export async function readLinkTicket(userId: string): Promise<number | null> {
   }
 }
 
-export async function clearLinkTicket(): Promise<void> {
-  (await cookies()).delete(COOKIE);
-}
+// Ticket clearing is done by the caller on its OWN NextResponse (response.cookies.delete),
+// same reason setLinkTicketOnResponse exists — a `cookies().delete()` call from a route
+// that then redirects is not reliably applied to the redirect response once the root
+// middleware has already prepared one. See app/api/plex/callback/route.ts.
