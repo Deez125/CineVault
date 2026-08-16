@@ -36,7 +36,7 @@ export async function GET() {
   // Without a linked Plex account there is no possible match, so no need to hit Plex.
   // Answering empty rather than fetching-and-filtering to nothing keeps the request cheap
   // and stops us leaking that the Plex server is reachable to accounts that shouldn't care.
-  if (!user.plexUserId) {
+  if (!user.plexUserId && !user.plexUsername) {
     const body: MySessionsResponse = {
       mySessions: [],
       allowance: { used: 0, limit: user.streamLimit },
@@ -56,9 +56,27 @@ export async function GET() {
     return Response.json({ error: "upstream unavailable" }, { status: 503 });
   }
 
-  const mySessions = all.filter(
-    (s) => s.userId !== null && s.userId === user.plexUserId
-  );
+  // Two ways to attribute a session to this member:
+  //
+  //  a) userId match — the normal case. Every ordinary member's playback comes with their
+  //     plex.tv account id, which is what pollLink stored on their row.
+  //  b) username match — the server-owner quirk. Plex reports the OWNER's own playback with
+  //     User.id="1" (the local-admin sentinel) rather than their plex.tv id, so the id
+  //     comparison never matches. User.title still carries the owner's real Plex username,
+  //     which pollLink also stored, and Plex usernames are globally unique on the platform.
+  //
+  // Both fields come from linking, so a member who has never linked hits neither branch and
+  // sees nothing, which is correct.
+  const wantedUsername = user.plexUsername?.toLowerCase() ?? null;
+  const mySessions = all.filter((s) => {
+    if (s.userId !== null && user.plexUserId !== null && s.userId === user.plexUserId) {
+      return true;
+    }
+    if (wantedUsername && s.username && s.username.toLowerCase() === wantedUsername) {
+      return true;
+    }
+    return false;
+  });
 
   const body: MySessionsResponse = {
     mySessions,
