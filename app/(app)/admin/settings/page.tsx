@@ -4,7 +4,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageHeader } from "@/components/app/page-header";
 import { ServiceSettingsClient } from "./service-settings-client";
 import { emailConfigured, emailVerificationRequired } from "@/lib/email";
-import { env, isProduction, plexConfigured, protectedPlexUsers, tracearrConfigured } from "@/lib/env";
+import { env, isProduction, plexConfigured, protectedPlexUsers } from "@/lib/env";
 import { isLiveMode } from "@/lib/stripe/client";
 import { cn } from "@/lib/utils";
 
@@ -45,11 +45,11 @@ export default async function ServiceSettingsPage() {
         : "Missing — nobody can be granted or revoked access",
     },
     {
-      name: "Tracearr",
-      ok: tracearrConfigured(),
-      detail: tracearrConfigured()
-        ? "Configured — stream limits enforced"
-        : "Missing — stream limits are not enforced",
+      name: "Stream limits",
+      ok: env.ENFORCE_STREAM_LIMITS,
+      detail: env.ENFORCE_STREAM_LIMITS
+        ? "Enforced"
+        : "Not enforced (ENFORCE_STREAM_LIMITS=false) — members can stream on unlimited devices",
     },
     {
       name: "Email",
@@ -141,11 +141,11 @@ export default async function ServiceSettingsPage() {
           <Row
             label="Enforce stream limits"
             value={
-              tracearrConfigured()
+              env.ENFORCE_STREAM_LIMITS
                 ? `every ${Math.round(env.ENFORCE_INTERVAL_MS / 1000)}s`
-                : "not running"
+                : "not running (ENFORCE_STREAM_LIMITS=false)"
             }
-            hint="Needs Tracearr"
+            hint="Kills the newest stream on any account over its plan limit"
           />
         </dl>
       </section>

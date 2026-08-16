@@ -9,7 +9,7 @@ import { EventFeed } from "@/components/app/event-feed";
 import { findDuplicatePlexAccounts, getStats } from "@/lib/admin";
 import { listEvents } from "@/lib/events";
 import { formatMoney } from "@/lib/stripe/client";
-import { plexConfigured, tracearrConfigured } from "@/lib/env";
+import { plexConfigured } from "@/lib/env";
 import { env } from "@/lib/env";
 
 export const metadata: Metadata = { title: "Admin" };
@@ -31,8 +31,13 @@ export default async function AdminOverviewPage() {
   if (!plexConfigured()) {
     warnings.push("Plex is not configured. Nobody can be granted or revoked access.");
   }
-  if (!tracearrConfigured()) {
-    warnings.push("Tracearr is not configured. Stream limits are not being enforced.");
+  if (!env.ENFORCE_STREAM_LIMITS) {
+    // Tracearr predated calling Plex directly; the actual switch these days is this env flag.
+    // Silent when it's on, warning when it's off — the reverse would train the eye to skip
+    // every alert on this page.
+    warnings.push(
+      "Stream limits are not being enforced (ENFORCE_STREAM_LIMITS=false). Members can watch on as many devices as they like."
+    );
   }
   if (duplicates.length > 0) {
     warnings.push(
