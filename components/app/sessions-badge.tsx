@@ -42,18 +42,10 @@ export function SessionsBadge({
       </span>
 
       <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <span className="text-sm font-semibold">
-          {initialLoading ? "Checking sessions…" : label(used, active)}
+        <span className="text-sm font-semibold tabular-nums">
+          {initialLoading ? "Checking sessions…" : label(used, limit, unlimited)}
         </span>
-        <span className="text-xs text-muted-foreground">
-          {unlimited ? (
-            "Unlimited streams"
-          ) : (
-            <>
-              {used} of {limit} stream{limit === 1 ? "" : "s"} in use
-            </>
-          )}
-        </span>
+        {unlimited && <span className="text-xs text-muted-foreground">Unlimited streams</span>}
       </div>
 
       {/* A pinch of live-ness so a full stream count is visible from across the room without
@@ -72,8 +64,14 @@ export function SessionsBadge({
   );
 }
 
-function label(used: number, active: boolean): string {
-  if (!active) return "Nothing playing";
-  if (used === 1) return "1 stream playing";
-  return `${used} streams playing`;
+/**
+ * "1/3 streams playing", "0/1 stream playing", or "N streams playing" for admins.
+ *
+ * Pluralised on the LIMIT rather than the current count — "1/3 streams" reads naturally
+ * even when the numerator is 1, while "1/3 stream" would look like a typo. Admins have no
+ * denominator to render (unlimited), so they get the plain count.
+ */
+function label(used: number, limit: number, unlimited: boolean): string {
+  if (unlimited) return `${used} stream${used === 1 ? "" : "s"} playing`;
+  return `${used}/${limit} stream${limit === 1 ? "" : "s"} playing`;
 }

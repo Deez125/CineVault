@@ -1,6 +1,6 @@
 "use client";
 
-import { Film, MonitorPlay, Pause, Play, Repeat, Signal, Tv, Wifi } from "lucide-react";
+import { Film, MonitorPlay, Pause, Play, Signal, Tv } from "lucide-react";
 import { useMySessions, type UseMySessionsResult } from "@/hooks/use-my-sessions";
 import type { PlexSession } from "@/lib/plex/sessions";
 import { isUnlimited } from "@/lib/plans";
@@ -171,26 +171,11 @@ function SessionCard({ session }: { session: PlexSession }) {
           {session.device && (
             <MetaItem icon={<MonitorPlay className="size-3.5" />} label={session.device} />
           )}
-          {session.playerAddress && (
-            <MetaItem
-              icon={<Wifi className="size-3.5" />}
-              label={locationLabel(session.playerAddress)}
-            />
-          )}
           {session.resolution && (
             <MetaItem
               icon={<Signal className="size-3.5" />}
               label={formatResolution(session.resolution)}
             />
-          )}
-          {session.transcoding && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning ring-1 ring-inset ring-warning/25"
-              title="The server is converting video for this device, which uses more server capacity."
-            >
-              <Repeat className="size-3" />
-              Transcoding
-            </span>
           )}
         </div>
       </div>
@@ -306,24 +291,4 @@ function formatResolution(res: string): string {
   if (normal === "sd") return "SD";
   if (/^\d+$/.test(normal)) return `${normal}p`;
   return res;
-}
-
-/**
- * "Local network" for RFC1918 ranges, otherwise "Streaming remotely".
- *
- * Not the raw IP — a member does not need to see their own address surfaced on their
- * dashboard, and it's not a useful detail for spotting an unfamiliar session either. The
- * useful signal is "is this being played from home or somewhere else."
- */
-function locationLabel(address: string): string {
-  if (
-    address.startsWith("10.") ||
-    address.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address) ||
-    address === "127.0.0.1" ||
-    address === "::1"
-  ) {
-    return "Local network";
-  }
-  return "Streaming remotely";
 }
