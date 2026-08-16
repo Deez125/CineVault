@@ -27,15 +27,64 @@ export type PlexSession = {
   /** For the log line, so a terminated stream can be recognised afterwards. */
   title: string | null;
   device: string | null;
+
+  // ── Extended fields for the member-facing "live sessions" panel ────────────
+  // The enforcer never reads any of these — they exist so /api/me/sessions can render a
+  // rich card without a second Plex fetch.
+
+  /** "episode" | "movie" | "clip" | etc. Drives whether we show S/E or a year. */
+  mediaType: string | null;
+  /**
+   * Show name for episodes, otherwise null. `title` still holds the episode name (or the
+   * movie title, for movies), so the two together give "Show / Episode".
+   */
+  showTitle: string | null;
+  /** Season and episode numbers, for episodes. */
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  /** Release year, for movies. */
+  year: number | null;
+  /**
+   * Plex-side artwork paths. Not URLs — these are relative paths passed through the
+   * /api/plex/image proxy so the Plex token never reaches the browser.
+   */
+  thumbPath: string | null;
+  artPath: string | null;
+  /** Playback progress in milliseconds. Both are populated when the player has loaded. */
+  positionMs: number | null;
+  durationMs: number | null;
+  /** e.g. "1080", "4k", "720". Verbatim from Plex — normalised at render. */
+  resolution: string | null;
+  /** True when the server is transcoding video for this session. */
+  transcoding: boolean;
+  /** Reported IP of the player, for a "local network" vs "external" note in the panel. */
+  playerAddress: string | null;
 };
 
 type RawSession = {
+  type?: string;
   sessionKey?: string | number;
   title?: string;
   grandparentTitle?: string;
+  parentIndex?: number;
+  index?: number;
+  year?: number;
+  thumb?: string;
+  grandparentThumb?: string;
+  art?: string;
+  viewOffset?: number;
+  duration?: number;
   Session?: { id?: string };
   User?: { id?: string | number; title?: string };
-  Player?: { state?: string; title?: string; product?: string };
+  Player?: {
+    state?: string;
+    title?: string;
+    product?: string;
+    address?: string;
+    remotePublicAddress?: string;
+  };
+  Media?: Array<{ videoResolution?: string }>;
+  TranscodeSession?: { videoDecision?: string } | null;
 };
 
 /** Everything currently streaming. */
@@ -54,6 +103,23 @@ export async function listSessions(): Promise<PlexSession[]> {
     // not count against anybody, let alone terminate.
     if (!sessionId || userId === undefined || userId === null) return [];
 
+    const isEpisode = s.type === "episode";
+
+    // For the LOG line title we still prefer the show name — the enforcer wants "The Bear"
+    // not "Episode 3". For the panel, showTitle + title are kept separate so the UI can
+    // render "Show / Episode" and lay them out however it wants.
+    const logTitle = s.grandparentTitle ?? s.title ?? null;
+
+    // Prefer episode-still for episodes (which is thumb), fall back to show art
+    // (grandparentThumb). Movies use their own thumb.
+    const thumbPath = isEpisode ? s.thumb ?? s.grandparentThumb ?? null : s.thumb ?? null;
+
+    // Plex reports videoDecision on TranscodeSession as "transcode" / "copy" / "direct play".
+    // Presence of a TranscodeSession alone means SOME conversion is happening (audio, subs,
+    // container), but the panel only calls out video-transcoding — the case that costs real
+    // server CPU.
+    const transcoding = s.TranscodeSession?.videoDecision === "transcode";
+
     return [
       {
         sessionId: String(sessionId),
@@ -61,10 +127,23 @@ export async function listSessions(): Promise<PlexSession[]> {
         userId: String(userId),
         username: s.User?.title ?? null,
         state: s.Player?.state ?? "unknown",
-        // Series name where there is one, so a log line says "The Bear" rather than
-        // "Episode 3".
-        title: s.grandparentTitle ?? s.title ?? null,
+        title: logTitle,
         device: s.Player?.title ?? s.Player?.product ?? null,
+
+        mediaType: s.type ?? null,
+        // For an episode, `title` from the panel's perspective is the EPISODE name; the show
+        // goes into showTitle.
+        showTitle: isEpisode ? s.grandparentTitle ?? null : null,
+        seasonNumber: isEpisode ? s.parentIndex ?? null : null,
+        episodeNumber: isEpisode ? s.index ?? null : null,
+        year: !isEpisode && typeof s.year === "number" ? s.year : null,
+        thumbPath,
+        artPath: s.art ?? null,
+        positionMs: typeof s.viewOffset === "number" ? s.viewOffset : null,
+        durationMs: typeof s.duration === "number" ? s.duration : null,
+        resolution: s.Media?.[0]?.videoResolution ?? null,
+        transcoding,
+        playerAddress: s.Player?.remotePublicAddress ?? s.Player?.address ?? null,
       },
     ];
   });

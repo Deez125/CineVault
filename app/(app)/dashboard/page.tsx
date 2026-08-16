@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { ServerCard } from "@/components/app/server-card";
 import { Announcements } from "@/components/app/announcements";
 import { RecentlyAdded } from "@/components/app/recently-added";
+import { SessionsBadge } from "@/components/app/sessions-badge";
 import { readRecentlyAdded } from "@/lib/plex/recently-added-cache";
 import { listForUser } from "@/lib/announcements";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -45,6 +46,11 @@ export default async function DashboardPage() {
           </div>
           <RecentlyAdded items={recent} />
         </section>
+
+        <SessionsBadge
+          isMember={user.isMember || user.isAdmin}
+          streamLimit={user.streamLimit}
+        />
 
         <ServerCard user={user} />
 

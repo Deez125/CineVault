@@ -29,7 +29,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { formatStreamLimit } from "@/lib/plans";
+import { formatStreamLimit, isUnlimited } from "@/lib/plans";
+import { useMySessions } from "@/hooks/use-my-sessions";
+import { SessionsPanel } from "@/components/app/sessions-panel";
 
 export type PlexLibrary = { id: string; title: string; type: string };
 
@@ -59,6 +61,11 @@ export function PlexClient({
 
   const linked = Boolean(state.plexUsername);
   const shared = state.shareState === "invited";
+
+  // Hoisted here rather than inside SessionsPanel — the same live count is rendered in the
+  // Stat card above the panel, and two independent hook instances would poll twice per tick.
+  // The panel receives this as its `data` prop and skips its own polling.
+  const sessionsData = useMySessions({ enabled: state.isMember && shared });
 
   /**
    * The owner's own account, not a guest of it.
@@ -168,7 +175,10 @@ export function PlexClient({
               </div>
 
               <dl className="grid gap-px bg-border sm:grid-cols-3">
-                <Stat label="Watching at once" value={state.isMember ? formatStreamLimit(state.streamLimit) : "—"} />
+                <Stat
+                  label="Watching at once"
+                  value={watchingAtOnceLabel(state, sessionsData.allowance?.used ?? 0)}
+                />
                 <Stat label="Libraries" value={libraryCount ? String(libraryCount) : "—"} />
                 <Stat
                   label="Access"
@@ -262,6 +272,20 @@ export function PlexClient({
         </section>
       </div>
 
+      {/* ── Live sessions ────────────────────────────────────────────────────
+          The full "watching now" panel: rich cards per stream, live x/y in the header. Only
+          rendered once the share is actually active — before that there is nothing they
+          could be watching, and showing "0/N" would suggest the wait is over when it isn't. */}
+      {shared && (
+        <div className="mt-5">
+          <SessionsPanel
+            isMember={state.isMember}
+            streamLimit={state.streamLimit}
+            data={sessionsData}
+          />
+        </div>
+      )}
+
       {/* ── How this works ───────────────────────────────────────────────────
           Hidden from the owner. Every step describes something that happens TO a guest —
           an invite going out, waiting for it, accepting it — and none of it happens to the
@@ -302,6 +326,22 @@ export function PlexClient({
       />
     </>
   );
+}
+
+/**
+ * The Stat's headline value: "1/3", "Unlimited", or "—" when there is no plan.
+ *
+ * For an admin (unlimited) the fraction would be meaningless — "1/∞" reads as a bug. Members
+ * see live-updating x/y. Non-members see nothing at all because the whole Stat row is only
+ * rendered inside the "linked" branch anyway.
+ */
+function watchingAtOnceLabel(
+  state: { isMember: boolean; streamLimit: number },
+  used: number
+): string {
+  if (!state.isMember) return "—";
+  if (isUnlimited(state.streamLimit)) return formatStreamLimit(state.streamLimit);
+  return `${used}/${state.streamLimit}`;
 }
 
 function Stat({
