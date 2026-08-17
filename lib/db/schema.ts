@@ -439,6 +439,15 @@ export const referralLinks = pgTable(
 
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
 
+    /**
+     * "referral" (default): normal member referral, referee gets the discount, referrer
+     * gets credit when they pay.
+     * "admin_invite": admin-issued invite that satisfies the invite-only gate but skips
+     * both the discount and the credit machinery — a plain account creation.
+     * Text (not enum) so a future kind ships without a migration.
+     */
+    kind: text("kind").notNull().default("referral"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -449,6 +458,10 @@ export const referralLinks = pgTable(
     // date on every page load.
     index("referral_links_owner_idx").on(t.ownerId, t.createdAt),
     index("referral_links_status_idx").on(t.status),
+    // Partial index just for the admin-invite listing so that page doesn't scan all rows.
+    index("referral_links_admin_kind_idx")
+      .on(t.ownerId, sql`${t.createdAt} desc`)
+      .where(sql`${t.kind} = 'admin_invite'`),
   ]
 );
 

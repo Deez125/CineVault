@@ -16,7 +16,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-
+  TicketPlus,
   Users,
 } from "lucide-react";
 import {
@@ -92,6 +92,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin", label: "Overview", icon: ShieldCheck },
   { href: "/admin/analytics", label: "Analytics", icon: LineChart },
   { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/invites", label: "Invite links", icon: TicketPlus },
   { href: "/admin/support", label: "Support inbox", icon: MessageSquare },
   { href: "/admin/announcements", label: "Announcements", icon: Megaphone },
   { href: "/admin/activity", label: "Activity log", icon: Activity },

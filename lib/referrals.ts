@@ -259,6 +259,89 @@ export async function purgeDeadLinks(): Promise<number> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Admin invites — same table, kind = 'admin_invite', no cap, no discount, no credit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type AdminInviteView = {
+  id: string;
+  code: string;
+  state: "unused" | "used" | "revoked" | "expired";
+  createdAt: Date;
+  expiresAt: Date;
+  usedByEmail: string | null;
+  usedAt: Date | null;
+};
+
+/**
+ * Mint an admin invite. No monthly cap (admins aren't slot-constrained), no discount
+ * side-effect (see attachReferral where kind === "admin_invite" short-circuits before the
+ * referrals row is written). Same collision-retry as the member generateLink.
+ */
+export async function generateAdminInvite(adminId: string): Promise<ReferralLink> {
+  const expiresAt = new Date(Date.now() + LINK_LIFETIME_DAYS * 24 * 60 * 60 * 1000);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const [link] = await db
+        .insert(referralLinks)
+        .values({ ownerId: adminId, code: newCode(), expiresAt, kind: "admin_invite" })
+        .returning();
+      return link;
+    } catch {
+      // Unique violation on the code — try another.
+    }
+  }
+  throw new Error("could not generate an admin invite");
+}
+
+/**
+ * Revoke an unused admin invite. Scoped to the admin who created it AND kind='admin_invite'
+ * so a leaked id can't be used to revoke someone's real referral link by mistake.
+ */
+export async function revokeAdminInvite(adminId: string, linkId: string): Promise<boolean> {
+  const rows = await db
+    .update(referralLinks)
+    .set({ status: "revoked", revokedAt: new Date() })
+    .where(
+      and(
+        eq(referralLinks.id, linkId),
+        eq(referralLinks.ownerId, adminId),
+        eq(referralLinks.kind, "admin_invite"),
+        eq(referralLinks.status, "unused")
+      )
+    )
+    .returning({ id: referralLinks.id });
+  return rows.length > 0;
+}
+
+/**
+ * Every admin invite this admin has ever created. Resolves the "unused-but-past-expiry"
+ * case to "expired" here so the UI never has to reason about clock vs. row status.
+ */
+export async function listAdminInvites(adminId: string): Promise<AdminInviteView[]> {
+  const rows = await db
+    .select()
+    .from(referralLinks)
+    .where(and(eq(referralLinks.ownerId, adminId), eq(referralLinks.kind, "admin_invite")))
+    .orderBy(desc(referralLinks.createdAt))
+    .limit(100);
+
+  const now = new Date();
+  return rows.map((link) => ({
+    id: link.id,
+    code: link.code,
+    state:
+      link.status === "unused" && link.expiresAt <= now
+        ? "expired"
+        : (link.status as AdminInviteView["state"]),
+    createdAt: link.createdAt,
+    expiresAt: link.expiresAt,
+    usedByEmail: link.usedByEmail,
+    usedAt: link.usedAt,
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Redemption
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -303,10 +386,15 @@ export async function inspectCode(code: string): Promise<CodeState> {
   return "expired";
 }
 
-/** Who is inviting, for the "X invited you" line on the signup page. */
+/**
+ * Who is inviting, for the "X invited you" line on the signup page. Returns null for
+ * admin-issued invites — those are anonymous by design (no referrer to name and no
+ * discount to promise), so the signup page renders as a plain "create your account" form
+ * with the invite-only gate satisfied silently.
+ */
 export async function findInviter(code: string): Promise<User | null> {
   const link = await findLink(code);
-  if (!link) return null;
+  if (!link || link.kind === "admin_invite") return null;
 
   const [owner] = await db.select().from(users).where(eq(users.id, link.ownerId)).limit(1);
   return owner ?? null;
@@ -346,6 +434,13 @@ export async function attachReferral(
       .returning({ id: referralLinks.id });
 
     if (claimed.length === 0) return;
+
+    // Admin invites stop here: link is claimed (so it can't be reused), but no referrals
+    // row is written — the whole point is to satisfy the invite-only gate without triggering
+    // the discount for the referee or the credit payout for the "referrer". A referredBy
+    // link would be a lie (no member actually referred them) and the checkout would then
+    // apply half off, which is exactly what admin invites exist to avoid.
+    if (link.kind === "admin_invite") return;
 
     const [owner] = await db.select().from(users).where(eq(users.id, link.ownerId)).limit(1);
     if (!owner) return;
