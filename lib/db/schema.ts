@@ -635,6 +635,35 @@ export const adminCosts = pgTable(
   (t) => [index("admin_costs_active_idx").on(t.active)]
 );
 
+/**
+ * Per-user notifications the ADMIN generates by acting on someone's account.
+ *
+ * Separate from `announcements` (broadcast, admin-composed, targeted by tier) because
+ * these are always personal, always short, always tied to exactly one action, and get
+ * auto-dismissed once read. `kind` and `severity` are text (not enums) so a new kind
+ * ships without a migration.
+ */
+export const userNotifications = pgTable(
+  "user_notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    severity: text("severity").notNull().default("info"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("user_notifications_unread_idx")
+      .on(t.userId, sql`${t.createdAt} desc`)
+      .where(sql`${t.readAt} IS NULL`),
+  ]
+);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export type User = typeof users.$inferSelect;
@@ -655,3 +684,5 @@ export type NewMetricsSnapshot = typeof metricsSnapshot.$inferInsert;
 export type UserActivity = typeof userActivity.$inferSelect;
 export type AdminCost = typeof adminCosts.$inferSelect;
 export type NewAdminCost = typeof adminCosts.$inferInsert;
+export type UserNotification = typeof userNotifications.$inferSelect;
+export type NewUserNotification = typeof userNotifications.$inferInsert;

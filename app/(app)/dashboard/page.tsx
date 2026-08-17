@@ -6,6 +6,8 @@ import { ServerCard } from "@/components/app/server-card";
 import { Announcements } from "@/components/app/announcements";
 import { RecentlyAdded } from "@/components/app/recently-added";
 import { SessionsBadge } from "@/components/app/sessions-badge";
+import { UserNotifications } from "@/components/app/user-notifications";
+import { listUnreadNotifications } from "@/lib/notifications";
 import { readRecentlyAdded } from "@/lib/plex/recently-added-cache";
 import { listForUser } from "@/lib/announcements";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -16,6 +18,12 @@ import { REFERRAL_REWARD } from "@/lib/referrals";
 
 export const metadata: Metadata = { title: "Overview" };
 
+// Notifications land here in real time as the admin acts on the account, and a cached
+// render would silently hide the latest one until the next full navigation invalidates
+// itself. Rendering fresh on every visit is a rounding error in cost and the correct
+// behaviour for a page whose whole job is to reflect right-now state.
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
   await requireUser("/dashboard");
   const user = await getCurrentUser();
@@ -23,7 +31,14 @@ export default async function DashboardPage() {
 
   // Notices: both halves, what is showing and what they have closed but can get back to.
   // Recently added is read from the cache the worker fills, never fetched from Plex here.
-  const [notices, recent] = await Promise.all([listForUser(user.id), readRecentlyAdded()]);
+  // Personal notifications live above everything else because they represent an admin action
+  // taken on this specific account — a credit, a discount — and the whole point is that they
+  // catch the eye on next login.
+  const [notices, recent, notifications] = await Promise.all([
+    listForUser(user.id),
+    readRecentlyAdded(),
+    listUnreadNotifications(user.id),
+  ]);
 
   return (
     <>
@@ -33,6 +48,8 @@ export default async function DashboardPage() {
       />
 
       <div className="space-y-5">
+        <UserNotifications notifications={notifications} />
+
         <Announcements visible={notices.visible} dismissed={notices.dismissed} />
 
         <section>

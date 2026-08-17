@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Ban,
   CircleCheck,
   EllipsisVertical,
+  ExternalLink,
   LoaderCircle,
   RefreshCw,
   Send,
@@ -103,12 +105,23 @@ export function UsersTable({ users, selfId }: { users: UserListItem[]; selfId: s
             {users.map((user) => (
               <tr key={user.id} className="align-middle">
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{displayName(user)}</span>
-                    {user.isAdmin && <Tag>admin</Tag>}
-                    {user.banned && <Tag tone="destructive">banned</Tag>}
-                  </div>
-                  <div className="text-xs text-muted-foreground">{user.email}</div>
+                  {/* The name is a link to their admin profile. Whole "account" cell is the
+                      target — small hover treatment nudges people to try it, and the URL
+                      stays copy-pasteable. The dropdown on the right still owns the
+                      destructive actions. */}
+                  <Link
+                    href={`/admin/profile/${user.id}`}
+                    className="group -mx-1 block rounded px-1 py-0.5 transition-colors hover:bg-muted/50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium group-hover:underline underline-offset-2">
+                        {displayName(user)}
+                      </span>
+                      {user.isAdmin && <Tag>admin</Tag>}
+                      {user.banned && <Tag tone="destructive">banned</Tag>}
+                    </div>
+                    <div className="text-xs text-muted-foreground">{user.email}</div>
+                  </Link>
                 </td>
 
                 <td className="px-4 py-3">
@@ -156,6 +169,15 @@ export function UsersTable({ users, selfId }: { users: UserListItem[]; selfId: s
                     </DropdownMenuTrigger>
 
                     <DropdownMenuContent align="end" className="w-52">
+                      <DropdownMenuItem
+                        onClick={() => router.push(`/admin/profile/${user.id}`)}
+                      >
+                        <ExternalLink />
+                        View profile
+                      </DropdownMenuItem>
+
+                      <DropdownMenuSeparator />
+
                       <DropdownMenuItem onClick={() => run(user, "reconcile")}>
                         <RefreshCw />
                         Re-check against Stripe
