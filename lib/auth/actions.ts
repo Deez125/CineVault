@@ -3,10 +3,11 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { env } from "@/lib/env";
+import { env, inviteOnlySignup } from "@/lib/env";
 import { logEvent } from "@/lib/events";
 import { rateLimit, resetRateLimit } from "@/lib/rate-limit";
 import { getSupabaseServer } from "@/lib/supabase/server";
+import { inspectCode } from "@/lib/referrals";
 
 /**
  * Sign up, sign in, sign out, and password reset.
@@ -60,6 +61,16 @@ export async function signupAction(_prev: FormState, formData: FormData): Promis
   const next = asSafePath(formData.get("next"));
   const ip = await clientIp();
   const ref = referralCodeFrom(formData.get("ref"));
+
+  // Invite-only gate. The page redirects a browser away in this case; the action guard
+  // exists because a form POST can hit here directly and the two checks must agree —
+  // "gate the data, not just the page." Reversal is the env flag, no code change.
+  if (inviteOnlySignup()) {
+    const refState = ref ? await inspectCode(ref) : null;
+    if (refState !== "live") {
+      return { error: "New accounts are invite-only right now. Ask a member for a link." };
+    }
+  }
 
   const limit = rateLimit(`signup:${ip}`, 5, 60 * 60 * 1000);
   if (!limit.allowed) {

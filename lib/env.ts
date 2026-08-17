@@ -142,6 +142,17 @@ const schema = z.object({
     .transform((v) => v === "true"),
 
   /**
+   * When true, signup is only reachable via a live referral link — a plain visit to /signup
+   * without a valid `ref` gets redirected to /invite-only. Kept as a reversible switch (env
+   * flag, no schema changes) so the door can be opened again by flipping the value in
+   * Coolify without a deploy. Default off so nothing changes for existing deployments.
+   */
+  INVITE_ONLY_SIGNUP: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
+  /**
    * Dry-run mode for the nightly analytics snapshotter. Same pattern as ENFORCE_STREAM_LIMITS
    * — the job still runs, still computes the whole row, and logs what it would insert; it
    * just does not touch the table. Flip to false only after watching one real day's output.
@@ -170,6 +181,15 @@ if (!parsed.success) {
 export const env = parsed.data;
 
 export const isProduction = env.NODE_ENV === "production";
+
+/**
+ * True when signup should be gated behind a live referral link. Exposed as a helper so the
+ * signup page, the signup server action, and the login page all read the same source of
+ * truth — flipping INVITE_ONLY_SIGNUP in Coolify is the whole reversal path.
+ */
+export function inviteOnlySignup(): boolean {
+  return env.INVITE_ONLY_SIGNUP;
+}
 
 /** True when every Plex credential is present. */
 export function plexConfigured(): boolean {

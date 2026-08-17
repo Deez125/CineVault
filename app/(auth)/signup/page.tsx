@@ -10,6 +10,7 @@ import { signupAction } from "@/lib/auth/actions";
 import { getSessionUser } from "@/lib/auth/session";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/constants";
 import { REFEREE_PERCENT_OFF, findInviter, inspectCode } from "@/lib/referrals";
+import { inviteOnlySignup } from "@/lib/env";
 import { displayName } from "@/lib/display-name";
 
 export const metadata: Metadata = { title: "Create an account" };
@@ -25,9 +26,16 @@ export default async function SignupPage({
   // A dead invite gets its own page rather than being quietly ignored. Somebody who followed
   // a link expecting half off should be told it will not happen, not shown a normal signup
   // form and surprised by the full price at checkout.
-  if (params.ref) {
-    const state = await inspectCode(params.ref);
-    if (state !== "live") redirect(`/invite-unavailable?state=${state}`);
+  const refState = params.ref ? await inspectCode(params.ref) : null;
+  if (refState && refState !== "live") redirect(`/invite-unavailable?state=${refState}`);
+
+  // Invite-only mode: without a live referral code the form + OAuth get replaced with a
+  // "you need an invite" message on this same page. Reversible via the INVITE_ONLY_SIGNUP
+  // env flag — flip it in Coolify and the form reappears without a deploy. Rendering
+  // inline instead of redirecting means every "Get started" CTA on the marketing site
+  // still works: users land here and see exactly why they can't sign up right now.
+  if (inviteOnlySignup() && refState !== "live") {
+    return <InviteOnlyMessage />;
   }
 
   // Looked up here purely so the page can say whose invite this is. The code itself is
@@ -111,6 +119,37 @@ export default async function SignupPage({
           Privacy Policy
         </Link>
         .
+      </p>
+    </>
+  );
+}
+
+/**
+ * What replaces the signup form when INVITE_ONLY_SIGNUP is on and the visitor doesn't
+ * have a live referral link.
+ *
+ * Rendered inline on the same URL rather than as a redirect, so every "Get started" CTA
+ * on the marketing site still lands here — the visitor sees exactly why they can't sign
+ * up right now, instead of hitting a form that vanishes to a different URL. Layout
+ * matches the normal signup page's header (auth-display heading + subtitle) so it looks
+ * like part of the flow rather than an error state.
+ */
+function InviteOnlyMessage() {
+  return (
+    <>
+      <div className="mb-8 text-center">
+        <h1 className="auth-display text-4xl leading-none sm:text-5xl">Invite only</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          New accounts require an invite from an existing member. Reach out to a member you
+          know for one of their invite links.
+        </p>
+      </div>
+
+      <p className="mt-6 text-center text-sm text-muted-foreground">
+        Already have an account?{" "}
+        <Link href="/login" className="text-foreground underline underline-offset-2">
+          Sign in
+        </Link>
       </p>
     </>
   );
