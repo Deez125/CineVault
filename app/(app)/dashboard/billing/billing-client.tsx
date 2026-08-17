@@ -276,6 +276,7 @@ export function BillingClient({
             </div>
           </div>
 
+
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-5 py-3">
             <p className="text-xs text-muted-foreground">
               Spent automatically — on your next bill, and on any upgrade you make before

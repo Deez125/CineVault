@@ -14,6 +14,10 @@ import { REFEREE_PERCENT_OFF, shouldDiscount } from "@/lib/referrals";
 
 export const metadata: Metadata = { title: "Billing" };
 
+// Live Stripe on every visit — same reason as /dashboard. Admin credit adjustments and
+// discount changes need to show up immediately, and a cached render defeats that.
+export const dynamic = "force-dynamic";
+
 export default async function BillingPage({
   searchParams,
 }: {

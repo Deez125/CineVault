@@ -66,9 +66,16 @@ export type SubscriptionDetail = {
 export type CreditBreakdown = {
   /** Granted for referring people, less anything clawed back. */
   fromReferrals: number;
-  /** Everything else: downgrades, goodwill adjustments, refunds to the account. */
+  /**
+   * Everything else — downgrades, admin adjustments, refunds to the account — netted so
+   * an admin add-then-remove of the same amount reads as zero rather than as separate lines
+   * that don't add up.
+   */
   fromAdjustments: number;
-  /** Already consumed by past invoices. */
+  /**
+   * Consumed by real invoices. Admin removals are NOT counted here — those net into
+   * fromAdjustments instead, because the money wasn't spent on anything, it was reversed.
+   */
   used: number;
   /** What is left and spendable right now. Equals the Stripe balance. */
   available: number;
@@ -87,7 +94,7 @@ export type CreditEntry = {
    * so nothing downstream has to remember which way round it is.
    */
   amount: number;
-  kind: "referral" | "plan_change" | "adjustment";
+  kind: "referral" | "plan_change" | "adjustment" | "admin";
   /** "Downgraded from 2 Users to 1 User", "Referral credit — j••••@gmail.com". */
   label: string;
   /** Credit available immediately after this movement. */
@@ -209,19 +216,35 @@ async function creditBreakdown(
       const isReferral =
         tx.metadata?.kind === "referral" || /^referral credit/i.test(tx.description ?? "");
 
+      // Admin-driven adjustments (award / edit balance from /admin/profile/…). Metadata is
+      // authoritative — the description is a nice string for Stripe's dashboard but the UI
+      // renders its own label from amount sign + metadata.reason so the sentence reads the
+      // same whether the row was written yesterday or a year ago.
+      const isAdmin = tx.metadata?.kind === "admin_credit";
+
       const invoiceId = typeof tx.invoice === "string" ? tx.invoice : tx.invoice?.id;
       const planChange = invoiceId ? described.get(invoiceId) : undefined;
+
+      const label = isReferral
+        ? maskEmails(tx.description ?? "Referral credit")
+        : isAdmin
+          ? adminLabel(tx.amount, tx.metadata?.reason)
+          : (planChange ??
+              tx.description ??
+              (tx.amount < 0 ? "Credit added" : "Applied to your bill"));
 
       history.push({
         id: tx.id,
         at: new Date(tx.created * 1000).toISOString(),
         amount: -tx.amount,
-        kind: isReferral ? "referral" : planChange ? "plan_change" : "adjustment",
-        label: isReferral
-          ? maskEmails(tx.description ?? "Referral credit")
-          : (planChange ??
-            tx.description ??
-            (tx.amount < 0 ? "Credit added" : "Applied to your bill")),
+        kind: isReferral
+          ? "referral"
+          : isAdmin
+            ? "admin"
+            : planChange
+              ? "plan_change"
+              : "adjustment",
+        label,
         balanceAfter: Math.max(0, -tx.ending_balance),
       });
 
@@ -232,13 +255,37 @@ async function creditBreakdown(
         continue;
       }
 
-      if (tx.amount < 0) fromAdjustments += -tx.amount;
-      else used += tx.amount;
+      if (isAdmin) {
+        // Admin actions net into fromAdjustments — an add and a subsequent remove of the
+        // same amount cancel out, showing the correct end-state balance. Crucially, admin
+        // removals are NOT counted as "used on past bills" (which the old logic did just by
+        // sign, since removals carry a positive amount) — those txs have no invoice attached
+        // and were never really "used", they were reversed. Same reasoning as the referral
+        // clawback above.
+        fromAdjustments += -tx.amount;
+        continue;
+      }
+
+      if (tx.amount < 0) {
+        fromAdjustments += -tx.amount;
+      } else if (invoiceId) {
+        // Positive amount + attached invoice = real invoice consumption or a proration
+        // debit. This is the only path into "used on past bills."
+        used += tx.amount;
+      } else {
+        // Positive amount without an invoice = a manual/dashboard removal that isn't ours.
+        // Nets into fromAdjustments so the totals still add up rather than getting silently
+        // filed under "used."
+        fromAdjustments += -tx.amount;
+      }
     }
 
     return {
       fromReferrals: Math.max(0, fromReferrals),
-      fromAdjustments,
+      // Clamp — if an admin removed more than they added the net can go negative in the
+      // math, but the UI reads it as "how much credit did this member accrue" which cannot
+      // be less than zero. The true balance below is the real answer.
+      fromAdjustments: Math.max(0, fromAdjustments),
       used,
       available,
       currency,
@@ -247,8 +294,31 @@ async function creditBreakdown(
   } catch {
     // Never let this break the billing page. The balance itself is known and correct; only
     // the breakdown is missing.
-    return { fromReferrals: 0, fromAdjustments: 0, used: 0, available, currency, history: [] };
+    return {
+      fromReferrals: 0,
+      fromAdjustments: 0,
+      used: 0,
+      available,
+      currency,
+      history: [],
+    };
   }
+}
+
+/**
+ * Label for an admin-driven balance transaction.
+ *
+ * Composed from amount + metadata rather than pulled from the description, so a row from
+ * an older SDK version (or a manual dashboard adjustment tagged with kind=admin_credit)
+ * still reads the same as one written today.
+ *
+ * Stripe sign convention: negative amount means credit ADDED to the customer, positive
+ * means credit REMOVED (they now owe more). The verb flips accordingly.
+ */
+function adminLabel(amount: number, reason: unknown): string {
+  const prefix = amount < 0 ? "Credit awarded by admin" : "Credit removed by admin";
+  const trimmed = typeof reason === "string" ? reason.trim() : "";
+  return trimmed ? `${prefix} — ${trimmed}` : prefix;
 }
 
 /**
